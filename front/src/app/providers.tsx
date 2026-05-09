@@ -18,7 +18,7 @@ function buildTheme(mode: ColorMode) {
   return createTheme({
     palette: {
       mode,
-      primary: { main: "#10A37F" }, // ChatGPT green
+      primary: { main: "#10A37F" },
       background: {
         default: isDark ? "#0B0F14" : "#F7F7F8",
         paper: isDark ? "#0F172A" : "#FFFFFF",
@@ -27,7 +27,7 @@ function buildTheme(mode: ColorMode) {
         primary: isDark ? "#E5E7EB" : "#111827",
         secondary: isDark ? "#9CA3AF" : "#4B5563",
       },
-      divider: isDark ? "rgba(255,255,255,0.10)" : "rgba(17,24,39,0.10)",
+      divider: isDark ? "rgba(255,255,255,0.08)" : "rgba(17,24,39,0.10)",
     },
     shape: { borderRadius: 14 },
     typography: {
@@ -43,6 +43,61 @@ function buildTheme(mode: ColorMode) {
       },
       MuiButton: {
         defaultProps: { disableElevation: true },
+        styleOverrides: {
+          root: ({ ownerState }) => ({
+            borderRadius: 10,
+            ...(ownerState.variant === "contained" && ownerState.color === "primary"
+              ? {
+                  background: "linear-gradient(135deg, #10A37F 0%, #0d8a6b 100%)",
+                  "&:hover": {
+                    background: "linear-gradient(135deg, #0d8a6b 0%, #0b7560 100%)",
+                  },
+                }
+              : {}),
+          }),
+        },
+      },
+      MuiTextField: {
+        defaultProps: { size: "small" },
+        styleOverrides: {
+          root: {
+            "& .MuiOutlinedInput-root": {
+              borderRadius: 10,
+              "& fieldset": {
+                borderColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(17,24,39,0.15)",
+              },
+              "&:hover fieldset": {
+                borderColor: isDark ? "rgba(255,255,255,0.25)" : "rgba(17,24,39,0.30)",
+              },
+              "&.Mui-focused fieldset": {
+                borderColor: "#10A37F",
+                borderWidth: 1.5,
+              },
+            },
+          },
+        },
+      },
+      MuiListItemButton: {
+        styleOverrides: {
+          root: {
+            borderRadius: 8,
+            transition: "background-color 0.15s ease",
+          },
+        },
+      },
+      MuiChip: {
+        styleOverrides: {
+          root: {
+            borderRadius: 8,
+          },
+        },
+      },
+      MuiInputLabel: {
+        styleOverrides: {
+          root: {
+            fontSize: 14,
+          },
+        },
       },
     },
   });
@@ -61,10 +116,7 @@ export default function Providers(props: { children: React.ReactNode }) {
       mql.addEventListener("change", onChange);
       return () => mql.removeEventListener("change", onChange);
     }
-    // Fallback anciens navigateurs
-    // @ts-expect-error legacy API
     mql.addListener(onChange);
-    // @ts-expect-error legacy API
     return () => mql.removeListener(onChange);
   }, []);
 
@@ -79,4 +131,3 @@ export default function Providers(props: { children: React.ReactNode }) {
     </AppRouterCacheProvider>
   );
 }
-

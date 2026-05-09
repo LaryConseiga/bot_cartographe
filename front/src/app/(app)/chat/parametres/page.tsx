@@ -202,7 +202,7 @@ export default function ParametresPage() {
                 label="%"
                 type="number"
                 value={s.percent}
-                inputProps={{ min: 0, max: 100 }}
+                slotProps={{ htmlInput: { min: 0, max: 100 } }}
                 onChange={(e) => {
                   const v = Math.max(0, Math.min(100, Number(e.target.value || 0)));
                   const nextSkills = [...profile.skills];

@@ -6,6 +6,9 @@ import Providers from "./providers";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap",
+  // Évite l’avertissement « preloaded but not used » en dev quand le premier rendu utilise encore le fallback.
+  preload: false,
 });
 
 export const metadata: Metadata = {
