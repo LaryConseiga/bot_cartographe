@@ -127,7 +127,7 @@ function SidebarContent(props: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const [recents, setRecents] = React.useState<Array<{ id: string; title: string }>>([]);
 
-  React.useEffect(() => {
+  const refreshChats = React.useCallback(() => {
     let alive = true;
     import("@/lib/api")
       .then(async ({ listMyChats }) => {
@@ -147,7 +147,24 @@ function SidebarContent(props: { onNavigate?: () => void }) {
       })
       .catch(() => {});
     return () => { alive = false; };
-  }, [pathname]);
+  }, []);
+
+  // Charge au montage puis re-charge uniquement quand on crée/change de session
+  React.useEffect(() => {
+    const cleanup = refreshChats();
+    return cleanup;
+  }, [refreshChats]);
+
+  // Re-charge quand on navigue vers une nouvelle session chat (création de chat)
+  const prevPathRef = React.useRef(pathname);
+  React.useEffect(() => {
+    const prev = prevPathRef.current;
+    prevPathRef.current = pathname;
+    // Re-charger seulement si on arrive sur une URL de session chat qu'on n'avait pas avant
+    if (pathname.startsWith("/chat/c/") && prev !== pathname) {
+      refreshChats();
+    }
+  }, [pathname, refreshChats]);
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -300,16 +317,20 @@ export default function AppShell(props: { children: React.ReactNode }) {
   React.useEffect(() => {
     let alive = true;
     import("@/lib/api")
-      .then(async ({ getMyProfile }) => {
+      .then(async ({ getMyProfile, isUnauthorizedError }) => {
         try {
           await getMyProfile();
-        } catch {
+        } catch (e) {
           if (!alive) return;
-          router.replace("/connexion");
+          if (isUnauthorizedError(e)) router.replace("/connexion");
         }
       })
-      .catch(() => router.replace("/connexion"));
-    return () => { alive = false; };
+      .catch(() => {
+        /* import ou chargement module : ne pas envoyer vers la connexion */
+      });
+    return () => {
+      alive = false;
+    };
   }, [router]);
 
   React.useEffect(() => {

@@ -2,6 +2,153 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8092";
 
+/**
+ * URL publique directe vers Flask (optionnel). Si vide, le front utilise le proxy same-origin
+ * `/api/llm/*` (recommandé en dev : évite CORS et mélange localhost / 127.0.0.1).
+ */
+const NEXT_PUBLIC_LLM_DIRECT = (process.env.NEXT_PUBLIC_LLM_SERVICE_URL || "").replace(/\/$/, "");
+
+/** Skill par défaut côté Flask — aligné sur `index.html` (pas de champ `skill` dans le JSON). */
+export const DEFAULT_LLM_SKILL = "apex_conversationalist";
+
+/** Ex. `chat`, `summarize` — même contrat que `llm/index.html`. */
+function llmEndpoint(path: string): string {
+  const p = path.replace(/^\//, "");
+  if (NEXT_PUBLIC_LLM_DIRECT) return `${NEXT_PUBLIC_LLM_DIRECT}/${p}`;
+  return `/api/llm/${p}`;
+}
+
+export type LlmChatMessage = { role: "user" | "assistant"; content: string };
+
+/** Événement SSE émis par Flask (`type: status`, recherche Tavily, etc.) — comme dans `index.html`. */
+export type ChatStatusEvent = {
+  type?: string;
+  phase?: string;
+  message?: string;
+  icon?: string;
+  source?: string;
+  slug?: string;
+};
+
+/**
+ * Corps de requête comme dans `llm/index.html` : `{ messages, stream: true }`,
+ * avec `skill` / `cvText` seulement si nécessaire (extensions Apex).
+ */
+export function buildLlmChatBody(
+  messages: LlmChatMessage[],
+  options: { skill?: string; cvText?: string } = {}
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { messages, stream: true };
+  const sk = options.skill ?? DEFAULT_LLM_SKILL;
+  if (sk !== DEFAULT_LLM_SKILL) body.skill = sk;
+  if (options.cvText?.trim()) body.cvText = options.cvText.trim();
+  return body;
+}
+
+/**
+ * Consomme le flux SSE du Flask (même logique que la boucle dans `index.html`).
+ */
+export async function consumeLlmChatSse(
+  res: Response,
+  handlers: {
+    onToken?: (token: string) => void;
+    onStatus?: (evt: ChatStatusEvent) => void;
+    onDone?: () => void;
+  }
+): Promise<string> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("Réponse vide");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let assistantText = "";
+  let finished = false;
+
+  const handleParsed = (data: unknown): boolean => {
+    if (data === "[DONE]") {
+      finished = true;
+      handlers.onDone?.();
+      return true;
+    }
+    if (!data || typeof data !== "object") return false;
+    const rec = data as Record<string, unknown>;
+    if (typeof rec.error === "string") {
+      throw new Error(rec.error);
+    }
+    if (rec.type === "status") {
+      handlers.onStatus?.(rec as ChatStatusEvent);
+      return false;
+    }
+    if (typeof rec.token === "string") {
+      assistantText += rec.token;
+      handlers.onToken?.(rec.token);
+      return false;
+    }
+    if (rec.done === true) {
+      finished = true;
+      handlers.onDone?.();
+      return true;
+    }
+    return false;
+  };
+
+  readLoop: while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      for (const line of block.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const raw = line.slice(6).trim();
+          const data = JSON.parse(raw) as unknown;
+          if (handleParsed(data)) {
+            await reader.cancel().catch(() => {});
+            break readLoop;
+          }
+        } catch (e) {
+          if (e instanceof SyntaxError || (e instanceof Error && e.name === "SyntaxError")) continue;
+          throw e;
+        }
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    for (const line of buffer.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      try {
+        const data = JSON.parse(line.slice(6).trim()) as unknown;
+        if (handleParsed(data)) break;
+      } catch (e) {
+        if (e instanceof SyntaxError || (e instanceof Error && e.name === "SyntaxError")) continue;
+        throw e;
+      }
+    }
+  }
+
+  if (!finished) handlers.onDone?.();
+  return assistantText;
+}
+
+/** Résumé de conversation — équivalent au bouton « Résumer » de `index.html`. */
+export async function summarizeThread(messages: { role: string; content: string }[]): Promise<string> {
+  const res = await fetch(llmEndpoint("summarize"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages })
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; summary?: string };
+  if (!res.ok) {
+    throw new Error(String(data.error || `HTTP ${res.status}`));
+  }
+  return String(data.summary ?? "");
+}
+
 /** Même clé côté client : le back accepte cookie HttpOnly OU Bearer (voir requireUser). */
 export const ACCESS_TOKEN_STORAGE_KEY = "apexai_access_token";
 
@@ -20,6 +167,13 @@ function persistSessionToken(session: { access_token?: string } | null | undefin
   const t = session?.access_token;
   if (t) sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, t);
   else sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+}
+
+/** Utilisé par AppShell : ne rediriger vers /connexion que sur 401 réel, pas sur erreur réseau / 502. */
+export function isUnauthorizedError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const m = e.message;
+  return m.includes("Session expirée") || m.includes("non connecté") || m.includes("Reconnectez-vous");
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -133,7 +287,7 @@ export async function listMessages(sessionId: string) {
   return request<{ messages: ChatMessage[] }>(`/api/chats/${sessionId}/messages`);
 }
 
-/** PDF uniquement — extrait le texte via le back → llm-back et met à jour `student_profiles.cv_text`. */
+/** PDF uniquement — extraction côté back et mise à jour `student_profiles.cv_text`. */
 export async function uploadCvPdf(file: File): Promise<{
   cvText: string;
   charCount: number;
@@ -177,50 +331,48 @@ export async function sendMessage(sessionId: string, content: string) {
   });
 }
 
-/** Événement SSE émis par le back (ex. consultation roadmap.sh). */
-export type ChatStatusEvent = {
-  type?: string;
-  phase?: string;
-  message?: string;
-  icon?: string;
-  source?: string;
-  slug?: string;
-};
+export async function saveAssistantMessage(sessionId: string, content: string) {
+  const max = 8000;
+  const body = content.length > max ? content.slice(0, max) : content;
+  return request<{ message: ChatMessage }>(`/api/chats/${sessionId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ role: "assistant", content: body })
+  });
+}
 
 export type StreamChatOptions = {
   cvText?: string;
+  skill?: string;
   onToken?: (token: string) => void;
   onStatus?: (evt: ChatStatusEvent) => void;
   onDone?: () => void;
 };
 
 /**
- * Envoie un message au LLM via POST /api/chat (SSE). Les messages user/assistant
- * sont enregistrés côté serveur (llm-back) dans chat_messages.
+ * 1) Persiste le message user via back/ (Supabase)
+ * 2) Envoie l'historique + system prompt au Flask /chat (Groq + Tavily)
+ * 3) Persiste la réponse assistant via back/ (Supabase)
  */
 export async function streamChatMessage(
   sessionId: string,
   message: string,
   options: StreamChatOptions = {}
 ): Promise<void> {
-  const { cvText, onToken, onStatus, onDone } = options;
-  const headers = new Headers({ "Content-Type": "application/json" });
-  applyAuthHeaders(headers);
-  const res = await fetch(`${API_BASE}/api/chat`, {
+  const { cvText, skill = DEFAULT_LLM_SKILL, onToken, onStatus, onDone } = options;
+
+  await sendMessage(sessionId, message);
+  const history = await listMessages(sessionId);
+  const messages: LlmChatMessage[] = (history.messages || [])
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+  const res = await fetch(llmEndpoint("chat"), {
     method: "POST",
-    headers,
-    credentials: "include",
-    body: JSON.stringify({
-      sessionId,
-      message,
-      ...(cvText ? { cvText } : {})
-    })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildLlmChatBody(messages, { skill, cvText }))
   });
 
   if (!res.ok) {
-    if (res.status === 401 && typeof window !== "undefined") {
-      sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-    }
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
       const json = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
@@ -230,69 +382,10 @@ export async function streamChatMessage(
     throw new Error(txt || `HTTP ${res.status}`);
   }
 
-  const reader = res.body?.getReader();
-  if (!reader) throw new Error("Réponse vide");
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finished = false;
-
-  const handleDataPayload = (data: unknown): boolean => {
-    if (data === "[DONE]") {
-      finished = true;
-      onDone?.();
-      return true;
-    }
-    if (data && typeof data === "object") {
-      const o = data as Record<string, unknown>;
-      if ("error" in o && typeof o.error === "string") {
-        throw new Error(o.error);
-      }
-      if ("token" in o && typeof o.token === "string") {
-        onToken?.(o.token);
-      }
-      if (o.type === "status") {
-        onStatus?.(o as ChatStatusEvent);
-      }
-    }
-    return false;
-  };
-
-  const processEventBlock = (block: string) => {
-    const lines = block.split("\n").filter((l) => l.length > 0);
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const raw = line.slice(6).trim();
-      let data: unknown;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        continue;
-      }
-      if (handleDataPayload(data)) return true;
-    }
-    return false;
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-    for (;;) {
-      const sep = buffer.indexOf("\n\n");
-      if (sep === -1) break;
-      const block = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      if (processEventBlock(block)) {
-        await reader.cancel().catch(() => {});
-        return;
-      }
-    }
+  const assistantText = await consumeLlmChatSse(res, { onToken, onStatus, onDone });
+  const toSave = assistantText.trim();
+  if (toSave) {
+    await saveAssistantMessage(sessionId, toSave);
   }
-
-  if (buffer.trim()) {
-    processEventBlock(buffer);
-  }
-  if (!finished) onDone?.();
 }
 

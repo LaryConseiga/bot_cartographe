@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import TextField from "@mui/material/TextField";
@@ -126,6 +127,7 @@ function MessageBubble({ message }: { message: Message }) {
 
 export default function ChatThreadPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const sessionId = params.id;
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [text, setText] = React.useState("");
@@ -136,6 +138,9 @@ export default function ChatThreadPage() {
   const [streamingText, setStreamingText] = React.useState("");
   const [chatError, setChatError] = React.useState<string | null>(null);
   const [uploadingCv, setUploadingCv] = React.useState(false);
+  const [summaryOpen, setSummaryOpen] = React.useState(false);
+  const [summaryText, setSummaryText] = React.useState("");
+  const [summarizing, setSummarizing] = React.useState(false);
   const streamingAcc = React.useRef("");
   const sendingLock = React.useRef(false);
   const initSentRef = React.useRef(false);
@@ -201,7 +206,7 @@ export default function ChatThreadPage() {
           const rows = out.messages || [];
           if (rows.length === 0 && assistantSynced.trim()) {
             setChatError(
-              "Réponse reçue mais aucun message en base : vérifie que llm-back a SUPABASE_URL + clé service (même projet que le back)."
+              "Réponse reçue mais aucun message en base : vérifie la config Supabase du back (même projet que les sessions chat)."
             );
             mergeLocalReply();
           } else {
@@ -221,7 +226,7 @@ export default function ChatThreadPage() {
         const msg = e instanceof Error ? e.message : String(e);
         setChatError(
           msg ||
-            "Impossible de joindre le serveur (back sur le bon port ? cookie de connexion ? llm-back démarré ?)."
+            "Impossible de joindre le serveur (back + service llm Flask sur le bon port ? session active ?)."
         );
         setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
         setStatusBanner(null);
@@ -282,6 +287,46 @@ export default function ChatThreadPage() {
     void sendContent(content);
   }
 
+  async function handleSummarize() {
+    const pairs = messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ role: m.role, content: m.content }));
+    if (pairs.length === 0) {
+      setSummaryText("Aucune conversation à résumer.");
+      setSummaryOpen(true);
+      return;
+    }
+    setSummarizing(true);
+    setSummaryOpen(true);
+    setSummaryText("Génération du résumé…");
+    try {
+      const { summarizeThread } = await import("@/lib/api");
+      const s = await summarizeThread(pairs);
+      setSummaryText(s);
+    } catch (e) {
+      setSummaryText(`Erreur : ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSummarizing(false);
+    }
+  }
+
+  async function handleNewChat() {
+    if (
+      messages.length > 0 &&
+      typeof window !== "undefined" &&
+      !window.confirm("Ouvrir une nouvelle conversation ? La session actuelle reste dans ton historique.")
+    ) {
+      return;
+    }
+    try {
+      const { createMyChat } = await import("@/lib/api");
+      const out = await createMyChat();
+      router.push(`/chat/c/${out.chat.id}`);
+    } catch {
+      setChatError("Impossible de créer une nouvelle conversation.");
+    }
+  }
+
   async function handleCvFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -337,6 +382,71 @@ export default function ChatThreadPage() {
           {chatError}
         </Alert>
       ) : null}
+
+      <Box
+        sx={{
+          maxWidth: 860,
+          width: "100%",
+          mx: "auto",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 1,
+          flexWrap: "wrap",
+          py: 1,
+        }}
+      >
+        <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
+          ApexAI — Chat Groq
+        </Typography>
+        <Box sx={{ display: "flex", gap: 1, flexShrink: 0 }}>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={sending || summarizing || uploadingCv}
+            onClick={() => void handleSummarize()}
+          >
+            Résumer
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={sending || uploadingCv}
+            onClick={() => void handleNewChat()}
+          >
+            Nouvelle conversation
+          </Button>
+        </Box>
+      </Box>
+
+      {summaryOpen ? (
+        <Paper
+          elevation={0}
+          sx={{
+            maxWidth: 860,
+            width: "100%",
+            mx: "auto",
+            mb: 2,
+            p: 2,
+            border: "1px solid",
+            borderColor: "divider",
+            borderLeft: "3px solid",
+            borderLeftColor: "primary.main",
+            bgcolor: "action.hover",
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{ fontWeight: 700, color: "primary.main", letterSpacing: 0.5, display: "block", mb: 1 }}
+          >
+            Résumé de la conversation
+          </Typography>
+          <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
+            {summaryText}
+          </Typography>
+        </Paper>
+      ) : null}
+
       {/* Messages */}
       <Box
         sx={{
@@ -363,7 +473,7 @@ export default function ChatThreadPage() {
         {statusBanner ? (
           <StatusBanner
             message={statusBanner.message}
-            showGlobe={statusBanner.phase === "roadmap_fetch"}
+            showGlobe={statusBanner.phase === "search"}
           />
         ) : null}
 
@@ -484,9 +594,12 @@ export default function ChatThreadPage() {
               <MicrophoneIcon style={{ width: 18, height: 18 }} />
             </IconButton>
             <IconButton
-              type="submit"
-              aria-label={hasText ? "Envoyer" : "Audio"}
+              type={hasText ? "submit" : "button"}
+              aria-label={hasText ? "Envoyer le message" : "Saisis un message pour envoyer (audio à venir)"}
               disabled={sending || uploadingCv}
+              onClick={(e) => {
+                if (!hasText) e.preventDefault();
+              }}
               sx={{
                 mr: 0.5,
                 bgcolor: hasText ? "primary.main" : "rgba(255,255,255,0.07)",
