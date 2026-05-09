@@ -1,9 +1,12 @@
 import express from "express";
 import cors from "cors";
+import multer from "multer";
 import { randomUUID } from "crypto";
+import jwt, { type SignOptions } from "jsonwebtoken";
+import { PDFParse } from "pdf-parse";
 
 import { supabase } from "./supabase.js";
-import { zAuthLogin, zAuthSignup, zCreateChat, zCreateMessage, zDevCreateUser, zUpsertProfile, zUserId } from "./validators.js";
+import { zAuthLogin, zAuthSignup, zCreateMessage, zDevCreateUser, zUpsertProfile, zUserId } from "./validators.js";
 
 const app = express();
 
@@ -40,6 +43,30 @@ app.use(
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+const cvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
+const AUTH_COOKIE = "apexai_token";
+
+function cleanCvExtractedText(s: string): string {
+  return String(s || "")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E\u00A0-\uFFFF]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function extractPdfTextBuffer(buf: Buffer): Promise<string> {
+  const parser = new PDFParse({ data: new Uint8Array(buf) });
+  try {
+    const tr = await parser.getText();
+    return cleanCvExtractedText(tr?.text || "");
+  } finally {
+    await parser.destroy().catch(() => {});
+  }
+}
+
 function getBearerToken(req: express.Request) {
   const h = req.headers.authorization;
   if (!h) return null;
@@ -47,12 +74,77 @@ function getBearerToken(req: express.Request) {
   return m?.[1] ?? null;
 }
 
+function getCookie(req: express.Request, name: string) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  const parts = raw.split(";").map((p) => p.trim());
+  for (const p of parts) {
+    const eq = p.indexOf("=");
+    if (eq === -1) continue;
+    const k = p.slice(0, eq).trim();
+    if (k !== name) continue;
+    return decodeURIComponent(p.slice(eq + 1));
+  }
+  return null;
+}
+
+function setAuthCookie(res: express.Response, token: string) {
+  const isProd = process.env.NODE_ENV === "production";
+  const maxAgeSec = 60 * 60 * 24 * 7; // 7 jours (cookie), même si access token expire avant
+  const attrs = [
+    `${AUTH_COOKIE}=${encodeURIComponent(token)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${maxAgeSec}`
+  ];
+  if (isProd) attrs.push("Secure");
+  res.setHeader("Set-Cookie", attrs.join("; "));
+}
+
+function clearAuthCookie(res: express.Response) {
+  res.setHeader("Set-Cookie", `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+function signAccessToken(params: { userId: string; email?: string | null }) {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (!secret) throw new Error("JWT_ACCESS_SECRET manquant");
+  const expiresIn = process.env.JWT_ACCESS_EXPIRES_IN || "20m";
+  const signOpts = { expiresIn } as SignOptions;
+  return jwt.sign(
+    { sub: params.userId, email: params.email ?? undefined, typ: "access" },
+    secret,
+    signOpts
+  );
+}
+
+function verifyAccessToken(token: string): { userId: string; email?: string } | null {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (!secret) return null;
+  try {
+    const decoded = jwt.verify(token, secret) as { sub?: string; email?: string; typ?: string };
+    if (!decoded?.sub) return null;
+    if (decoded.typ && decoded.typ !== "access") return null;
+    return { userId: decoded.sub, email: decoded.email };
+  } catch {
+    return null;
+  }
+}
+
 async function requireUser(req: express.Request, res: express.Response) {
-  const token = getBearerToken(req);
+  const token = getBearerToken(req) || getCookie(req, AUTH_COOKIE);
   if (!token) {
     res.status(401).json({ error: "missing_bearer_token" });
     return null;
   }
+
+  // 1) Essaie d'abord ton JWT (custom)
+  const jwtUser = verifyAccessToken(token);
+  if (jwtUser) {
+    return { id: jwtUser.userId, email: jwtUser.email ?? undefined } as unknown as { id: string; email?: string };
+  }
+
+  // 2) Fallback: token Supabase (si besoin)
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data?.user) {
     res.status(401).json({ error: "invalid_token" });
@@ -60,6 +152,51 @@ async function requireUser(req: express.Request, res: express.Response) {
   }
   return data.user;
 }
+
+// ---------- Upload CV (PDF) — extraction texte locale ; le LLM (Groq/Tavily) vit dans llm/ ----------
+app.post(
+  "/api/upload-cv",
+  (req, res, next) => {
+    cvUpload.single("file")(req, res, (err: unknown) => {
+      if (err) {
+        const msg = err instanceof Error ? err.message : "Upload invalide";
+        return res.status(400).json({ error: msg });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    const user = await requireUser(req, res);
+    if (!user) return;
+
+    const f = (req as express.Request & { file?: Express.Multer.File }).file;
+    if (!f?.buffer) return res.status(400).json({ error: "Fichier requis (PDF)" });
+
+    const name = (f.originalname || "").toLowerCase();
+    const mt = (f.mimetype || "").toLowerCase();
+    const isPdf =
+      name.endsWith(".pdf") ||
+      mt === "application/pdf" ||
+      mt === "application/x-pdf" ||
+      (mt === "application/octet-stream" && name.endsWith(".pdf")) ||
+      (mt === "binary/octet-stream" && name.endsWith(".pdf"));
+    if (!isPdf) return res.status(400).json({ error: "Format PDF uniquement (.pdf)" });
+
+    try {
+      const cleanedText = await extractPdfTextBuffer(f.buffer);
+      if (!cleanedText) {
+        return res.status(500).json({ error: "Impossible de lire le PDF" });
+      }
+      const { error } = await supabase.from("student_profiles").update({ cv_text: cleanedText }).eq("id", user.id);
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ cvText: cleanedText, charCount: cleanedText.length, status: "ready" });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[upload-cv] error:", e);
+      return res.status(500).json({ error: "Impossible de lire le PDF" });
+    }
+  }
+);
 
 // ---------- Auth (sans LLM) ----------
 app.post("/auth/signup", async (req, res) => {
@@ -112,7 +249,9 @@ app.post("/auth/signup", async (req, res) => {
     // return a real session by logging in
     const login = await supabase.auth.signInWithPassword({ email, password });
     if (login.error) return res.status(401).json({ error: login.error.message });
-    return res.status(201).json({ user: login.data.user, session: login.data.session });
+    const access_token = signAccessToken({ userId: login.data.user!.id, email: login.data.user?.email ?? email });
+    setAuthCookie(res, access_token);
+    return res.status(201).json({ user: login.data.user, session: { access_token } });
   }
 
   const { data, error } = await supabase.auth.signUp({ email, password });
@@ -143,7 +282,7 @@ app.post("/auth/signup", async (req, res) => {
 
   return res.status(201).json({
     user: data.user,
-    session: data.session
+    session: { access_token: data.user ? signAccessToken({ userId: data.user.id, email }) : null }
   });
 });
 
@@ -159,10 +298,14 @@ app.post("/auth/login", async (req, res) => {
   });
   if (error) return res.status(401).json({ error: error.message });
 
-  return res.json({
-    user: data.user,
-    session: data.session
-  });
+  const access_token = signAccessToken({ userId: data.user!.id, email: data.user?.email ?? email });
+  setAuthCookie(res, access_token);
+  return res.json({ user: data.user, session: { access_token } });
+});
+
+app.post("/auth/logout", async (_req, res) => {
+  clearAuthCookie(res);
+  return res.json({ ok: true });
 });
 
 // Dev helper: créer un user sans email (bypass rate-limit email).
@@ -196,8 +339,14 @@ app.post("/auth/dev-create-user", async (req, res) => {
 
 // ---------- Profiles ----------
 app.get("/api/profiles/:id", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
   const parsed = zUserId.safeParse(req.params.id);
   if (!parsed.success) return res.status(400).json({ error: "invalid_user_id" });
+
+  // Un étudiant ne peut consulter que son propre profil
+  if (user.id !== parsed.data) return res.status(403).json({ error: "forbidden" });
 
   const { data, error } = await supabase
     .from("student_profiles")
@@ -210,13 +359,17 @@ app.get("/api/profiles/:id", async (req, res) => {
 });
 
 app.put("/api/profiles/:id", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
   const id = zUserId.safeParse(req.params.id);
   if (!id.success) return res.status(400).json({ error: "invalid_user_id" });
+
+  if (user.id !== id.data) return res.status(403).json({ error: "forbidden" });
 
   const body = zUpsertProfile.safeParse({ ...req.body, id: id.data });
   if (!body.success) return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
 
-  // Upsert profile row. NB: student_profiles.id references auth.users(id).
   const { data, error } = await supabase
     .from("student_profiles")
     .upsert(body.data, { onConflict: "id" })
@@ -259,13 +412,13 @@ app.put("/api/profile", async (req, res) => {
 
 // ---------- Chats ----------
 app.get("/api/chats", async (req, res) => {
-  const studentId = zUserId.safeParse(req.query.student_id);
-  if (!studentId.success) return res.status(400).json({ error: "invalid_student_id" });
+  const user = await requireUser(req, res);
+  if (!user) return;
 
   const { data, error } = await supabase
     .from("chat_sessions")
     .select("*")
-    .eq("student_id", studentId.data)
+    .eq("student_id", user.id)
     .order("last_active", { ascending: false })
     .limit(50);
 
@@ -274,13 +427,14 @@ app.get("/api/chats", async (req, res) => {
 });
 
 app.post("/api/chats", async (req, res) => {
-  const body = zCreateChat.safeParse(req.body);
-  if (!body.success) return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
+  const user = await requireUser(req, res);
+  if (!user) return;
 
-  const session_ref = body.data.session_ref ?? `chat_${randomUUID().slice(0, 8)}`;
+  const session_ref = typeof req.body?.session_ref === "string" ? req.body.session_ref : undefined;
+  const finalRef = session_ref ?? `chat_${randomUUID().slice(0, 8)}`;
   const { data, error } = await supabase
     .from("chat_sessions")
-    .insert({ student_id: body.data.student_id, session_ref })
+    .insert({ student_id: user.id, session_ref: finalRef })
     .select("*")
     .single();
 
@@ -319,8 +473,19 @@ app.post("/api/my/chats", async (req, res) => {
 });
 
 app.get("/api/chats/:sessionId/messages", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
   const sessionId = zUserId.safeParse(req.params.sessionId);
   if (!sessionId.success) return res.status(400).json({ error: "invalid_session_id" });
+
+  // Vérifie que la session appartient à l'utilisateur
+  const { data: session } = await supabase
+    .from("chat_sessions")
+    .select("student_id")
+    .eq("id", sessionId.data)
+    .maybeSingle();
+  if (!session || session.student_id !== user.id) return res.status(403).json({ error: "forbidden" });
 
   const { data, error } = await supabase
     .from("chat_messages")
@@ -334,8 +499,18 @@ app.get("/api/chats/:sessionId/messages", async (req, res) => {
 });
 
 app.post("/api/chats/:sessionId/messages", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
   const sessionId = zUserId.safeParse(req.params.sessionId);
   if (!sessionId.success) return res.status(400).json({ error: "invalid_session_id" });
+
+  const { data: session } = await supabase
+    .from("chat_sessions")
+    .select("student_id")
+    .eq("id", sessionId.data)
+    .maybeSingle();
+  if (!session || session.student_id !== user.id) return res.status(403).json({ error: "forbidden" });
 
   const body = zCreateMessage.safeParse(req.body);
   if (!body.success) return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
@@ -348,7 +523,6 @@ app.post("/api/chats/:sessionId/messages", async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // update last_active
   await supabase.from("chat_sessions").update({ last_active: new Date().toISOString() }).eq("id", sessionId.data);
 
   return res.status(201).json({ message: data });
