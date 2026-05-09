@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ApexAI — Chat Groq</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 20px;
+            border-bottom: 1px solid #30363d;
+            background: #161b22;
+        }
+
+        header h1 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        header .actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            background: #21262d;
+            color: #e6edf3;
+            border: 1px solid #30363d;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.15s;
+        }
+
+        button:hover {
+            background: #30363d;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.primary {
+            background: #10a37f;
+            border-color: #10a37f;
+            color: white;
+        }
+
+        button.primary:hover {
+            background: #0d8a6b;
+        }
+
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            max-width: 860px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .msg {
+            margin-bottom: 18px;
+            display: flex;
+        }
+
+        .msg.user {
+            justify-content: flex-end;
+        }
+
+        .msg .bubble {
+            max-width: 75%;
+            padding: 10px 14px;
+            border-radius: 14px;
+            font-size: 14.5px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .msg.user .bubble {
+            background: rgba(16, 163, 127, 0.18);
+            border: 1px solid rgba(16, 163, 127, 0.3);
+            border-radius: 14px 14px 4px 14px;
+        }
+
+        .msg.assistant .bubble {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 14px 14px 14px 4px;
+        }
+
+        .role {
+            font-size: 11px;
+            color: #7d8590;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .status {
+            text-align: center;
+            color: #7d8590;
+            font-size: 13px;
+            padding: 10px;
+        }
+
+        #summary-box {
+            max-width: 860px;
+            width: calc(100% - 40px);
+            margin: 0 auto 16px;
+            padding: 14px 16px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-left: 3px solid #10a37f;
+            border-radius: 8px;
+            font-size: 13.5px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            display: none;
+        }
+
+        #summary-box.visible {
+            display: block;
+        }
+
+        #summary-box .label {
+            font-size: 11px;
+            color: #10a37f;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        footer {
+            padding: 16px 20px;
+            border-top: 1px solid #30363d;
+            background: #0d1117;
+        }
+
+        .input-wrap {
+            max-width: 860px;
+            margin: 0 auto;
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        textarea {
+            flex: 1;
+            background: #161b22;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            padding: 10px 14px;
+            border-radius: 10px;
+            resize: none;
+            font-size: 14.5px;
+            font-family: inherit;
+            line-height: 1.5;
+            max-height: 160px;
+            min-height: 42px;
+            outline: none;
+        }
+
+        textarea:focus {
+            border-color: #10a37f;
+        }
+
+        .typing-dots span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background: #10a37f;
+            border-radius: 50%;
+            margin-right: 4px;
+            animation: pulse 1.2s infinite;
+        }
+
+        .typing-dots span:nth-child(2) {
+            animation-delay: 0.15s;
+        }
+
+        .typing-dots span:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            80%,
+            100% {
+                transform: scale(0.8);
+                opacity: 0.4;
+            }
+
+            40% {
+                transform: scale(1.2);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>ApexAI — Chat Groq</h1>
+        <div class="actions">
+            <button id="btn-summarize">Résumer</button>
+            <button id="btn-clear">Nouvelle conversation</button>
+        </div>
+    </header>
+
+    <div id="summary-box">
+        <div class="label">Résumé de la conversation</div>
+        <div id="summary-content"></div>
+    </div>
+
+    <div id="messages"></div>
+
+    <footer>
+        <div class="input-wrap">
+            <textarea id="input" placeholder="Posez votre question..." rows="1"></textarea>
+            <button id="btn-send" class="primary">Envoyer</button>
+        </div>
+    </footer>
+
+    <script>
+        const API_BASE = "";  // même origine (Flask sert le HTML)
+        const STORAGE_KEY = "apexai_chat_history";
+
+        const $messages = document.getElementById("messages");
+        const $input = document.getElementById("input");
+        const $btnSend = document.getElementById("btn-send");
+        const $btnClear = document.getElementById("btn-clear");
+        const $btnSummarize = document.getElementById("btn-summarize");
+        const $summaryBox = document.getElementById("summary-box");
+        const $summaryContent = document.getElementById("summary-content");
+
+        // Historique : tableau de { role, content }
+        let history = loadHistory();
+        let isStreaming = false;
+
+        function loadHistory() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? JSON.parse(raw) : [];
+            } catch {
+                return [];
+            }
+        }
+
+        function saveHistory() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+            } catch { }
+        }
+
+        function renderHistory() {
+            $messages.innerHTML = "";
+            for (const m of history) {
+                appendMessage(m.role, m.content);
+            }
+            scrollToBottom();
+        }
+
+        function appendMessage(role, content) {
+            const wrap = document.createElement("div");
+            wrap.className = "msg " + role;
+            const bubble = document.createElement("div");
+            bubble.className = "bubble";
+            if (role === "assistant") {
+                const r = document.createElement("div");
+                r.className = "role";
+                r.textContent = "ApexAI";
+                bubble.appendChild(r);
+            }
+            const text = document.createElement("div");
+            text.className = "text";
+            text.textContent = content;
+            bubble.appendChild(text);
+            wrap.appendChild(bubble);
+            $messages.appendChild(wrap);
+            return text;
+        }
+
+        function appendTyping() {
+            const wrap = document.createElement("div");
+            wrap.className = "msg assistant";
+            wrap.id = "typing-indicator";
+            wrap.innerHTML = `
+        <div class="bubble">
+          <div class="typing-dots"><span></span><span></span><span></span></div>
+        </div>`;
+            $messages.appendChild(wrap);
+            scrollToBottom();
+        }
+
+        function removeTyping() {
+            const el = document.getElementById("typing-indicator");
+            if (el) el.remove();
+        }
+
+        function scrollToBottom() {
+            $messages.scrollTop = $messages.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = $input.value.trim();
+            if (!text || isStreaming) return;
+
+            $input.value = "";
+            $input.style.height = "auto";
+
+            history.push({ role: "user", content: text });
+            saveHistory();
+            appendMessage("user", text);
+            scrollToBottom();
+
+            isStreaming = true;
+            $btnSend.disabled = true;
+            appendTyping();
+
+            try {
+                const res = await fetch(API_BASE + "/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ messages: history, stream: true })
+                });
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.error || "HTTP " + res.status);
+                }
+
+                removeTyping();
+                const textNode = appendMessage("assistant", "");
+                let assistantText = "";
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+
+                    let sep;
+                    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+                        const block = buffer.slice(0, sep);
+                        buffer = buffer.slice(sep + 2);
+                        for (const line of block.split("\n")) {
+                            if (!line.startsWith("data: ")) continue;
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === "status") {
+                                    // Met à jour l'indicateur de typing avec le message de statut
+                                    const typing = document.getElementById("typing-indicator");
+                                    if (typing) {
+                                        const bubble = typing.querySelector(".bubble");
+                                        bubble.innerHTML = `<div style="font-size:13px;color:#7d8590;">${data.message}</div>`;
+                                    }
+                                } else if (data.token) {
+                                    if (assistantText === "") removeTyping(); // on enlève le typing au premier token
+                                    if (!textNode.parentElement) {
+                                        // textNode pas encore attaché, on l'attache
+                                    }
+                                    assistantText += data.token;
+                                    textNode.textContent = assistantText;
+                                    scrollToBottom();
+                                }
+                            } catch { }
+                        }
+                    }
+                }
+
+                history.push({ role: "assistant", content: assistantText });
+                saveHistory();
+            } catch (e) {
+                removeTyping();
+                appendMessage("assistant", "Erreur : " + e.message);
+            } finally {
+                isStreaming = false;
+                $btnSend.disabled = false;
+                $input.focus();
+            }
+        }
+
+        async function summarize() {
+            if (history.length === 0) {
+                $summaryContent.textContent = "Aucune conversation à résumer.";
+                $summaryBox.classList.add("visible");
+                return;
+            }
+
+            $btnSummarize.disabled = true;
+            $summaryContent.textContent = "Génération du résumé...";
+            $summaryBox.classList.add("visible");
+
+            try {
+                const res = await fetch(API_BASE + "/summarize", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ messages: history })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || "Erreur");
+                $summaryContent.textContent = data.summary;
+            } catch (e) {
+                $summaryContent.textContent = "Erreur : " + e.message;
+            } finally {
+                $btnSummarize.disabled = false;
+            }
+        }
+
+        function clearChat() {
+            if (history.length > 0 && !confirm("Effacer la conversation ?")) return;
+            history = [];
+            saveHistory();
+            $messages.innerHTML = "";
+            $summaryBox.classList.remove("visible");
+        }
+
+        // Auto-resize du textarea
+        $input.addEventListener("input", () => {
+            $input.style.height = "auto";
+            $input.style.height = Math.min($input.scrollHeight, 160) + "px";
+        });
+
+        $input.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        $btnSend.addEventListener("click", sendMessage);
+        $btnClear.addEventListener("click", clearChat);
+        $btnSummarize.addEventListener("click", summarize);
+
+        // Init
+        renderHistory();
+        $input.focus();
+    </script>
+</body>
+
+</html>
