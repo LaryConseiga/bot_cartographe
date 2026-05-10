@@ -2,8 +2,15 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import { randomUUID } from "crypto";
+import { fileURLToPath } from "url";
+import path from "path";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import { PDFParse } from "pdf-parse";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// Chemin vers les fichiers traineddata pré-téléchargés (évite le fetch réseau)
+const TESSDATA_PATH = path.join(__dirname, "..", "tessdata");
 
 import { supabase } from "./supabase.js";
 import { zAuthLogin, zAuthSignup, zCreateMessage, zDevCreateUser, zUpsertProfile, zUserId } from "./validators.js";
@@ -66,6 +73,61 @@ async function extractPdfTextBuffer(buf: Buffer): Promise<string> {
     await parser.destroy().catch(() => {});
   }
 }
+
+// Singleton Tesseract worker — évite de recharger les modèles à chaque upload
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _tesseractWorker: any = null;
+let _tesseractBusy = false;
+const _tesseractQueue: Array<() => void> = [];
+
+async function _getTesseractWorker() {
+  if (!_tesseractWorker) {
+    const { createWorker } = await import("tesseract.js");
+    _tesseractWorker = await createWorker(["fra", "eng"], undefined, {
+      langPath: TESSDATA_PATH,
+    });
+  }
+  return _tesseractWorker;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function _runWithTesseract<T>(fn: (w: any) => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const execute = async () => {
+      _tesseractBusy = true;
+      try {
+        const w = await _getTesseractWorker();
+        resolve(await fn(w));
+      } catch (e) {
+        try { await _tesseractWorker?.terminate(); } catch { /* ignore */ }
+        _tesseractWorker = null;
+        reject(e);
+      } finally {
+        _tesseractBusy = false;
+        const next = _tesseractQueue.shift();
+        if (next) next();
+      }
+    };
+    if (_tesseractBusy) {
+      _tesseractQueue.push(execute);
+    } else {
+      void execute();
+    }
+  });
+}
+
+async function extractImageText(buf: Buffer): Promise<string> {
+  return _runWithTesseract(async (worker) => {
+    const result = await worker.recognize(buf);
+    return cleanCvExtractedText(result.data.text || "");
+  });
+}
+
+// Pré-chauffe le worker au démarrage (non-bloquant)
+_getTesseractWorker().catch((e: unknown) => {
+  // eslint-disable-next-line no-console
+  console.warn("[tesseract] warmup:", e instanceof Error ? e.message : String(e));
+});
 
 function getBearerToken(req: express.Request) {
   const h = req.headers.authorization;
@@ -180,15 +242,31 @@ app.post(
       mt === "application/x-pdf" ||
       (mt === "application/octet-stream" && name.endsWith(".pdf")) ||
       (mt === "binary/octet-stream" && name.endsWith(".pdf"));
-    if (!isPdf) return res.status(400).json({ error: "Format PDF uniquement (.pdf)" });
+    const isImage = mt.startsWith("image/") || /\.(jpe?g|png|webp)$/.test(name);
+    if (!isPdf && !isImage) return res.status(400).json({ error: "Formats acceptés : PDF ou image (JPG, PNG, WebP)" });
 
     try {
-      const cleanedText = await extractPdfTextBuffer(f.buffer);
+      const cleanedText = isPdf
+        ? await extractPdfTextBuffer(f.buffer)
+        : await extractImageText(f.buffer);
       if (!cleanedText) {
         return res.status(500).json({ error: "Impossible de lire le PDF" });
       }
-      const { error } = await supabase.from("student_profiles").update({ cv_text: cleanedText }).eq("id", user.id);
-      if (error) return res.status(500).json({ error: error.message });
+      const { data: updated, error: upErr } = await supabase
+        .from("student_profiles")
+        .update({ cv_text: cleanedText })
+        .eq("id", user.id)
+        .select("id");
+      if (upErr) return res.status(500).json({ error: upErr.message });
+      if (!updated?.length) {
+        const email = "email" in user && user.email ? user.email : null;
+        const { error: insErr } = await supabase.from("student_profiles").insert({
+          id: user.id,
+          email,
+          cv_text: cleanedText
+        });
+        if (insErr) return res.status(500).json({ error: insErr.message });
+      }
       return res.json({ cvText: cleanedText, charCount: cleanedText.length, status: "ready" });
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -391,7 +469,19 @@ app.get("/api/profile", async (req, res) => {
     .eq("id", user.id)
     .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
-  return res.json({ profile: data ?? null });
+
+  if (!data) {
+    const email = "email" in user && user.email ? user.email : null;
+    const { data: created, error: upErr } = await supabase
+      .from("student_profiles")
+      .upsert({ id: user.id, email }, { onConflict: "id" })
+      .select("*")
+      .single();
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    return res.json({ profile: created });
+  }
+
+  return res.json({ profile: data });
 });
 
 app.put("/api/profile", async (req, res) => {
@@ -472,6 +562,42 @@ app.post("/api/my/chats", async (req, res) => {
   return res.status(201).json({ chat: data });
 });
 
+app.patch("/api/my/chats/:id", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const sessionId = zUserId.safeParse(req.params.id);
+  if (!sessionId.success) return res.status(400).json({ error: "invalid_session_id" });
+
+  const { data: session } = await supabase
+    .from("chat_sessions")
+    .select("student_id")
+    .eq("id", sessionId.data)
+    .maybeSingle();
+  if (!session || session.student_id !== user.id) return res.status(403).json({ error: "forbidden" });
+
+  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 120) : null;
+  if (!title) return res.status(400).json({ error: "title requis" });
+
+  const { data, error } = await supabase
+    .from("chat_sessions")
+    .update({ title })
+    .eq("id", sessionId.data)
+    .select("*")
+    .single();
+
+  if (error) {
+    const msg = (error.message || "").toLowerCase();
+    if (msg.includes("does not exist") || msg.includes("schema cache")) {
+      // eslint-disable-next-line no-console
+      console.warn("[api/my/chats PATCH] colonne title absente — exécuter migration_v2.sql :", error.message);
+      return res.json({ chat: null });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  return res.json({ chat: data });
+});
+
 app.get("/api/chats/:sessionId/messages", async (req, res) => {
   const user = await requireUser(req, res);
   if (!user) return;
@@ -526,6 +652,47 @@ app.post("/api/chats/:sessionId/messages", async (req, res) => {
   await supabase.from("chat_sessions").update({ last_active: new Date().toISOString() }).eq("id", sessionId.data);
 
   return res.status(201).json({ message: data });
+});
+
+// ---------- Skills ----------
+app.get("/api/my/skills", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const { data, error } = await supabase
+    .from("student_skills")
+    .select("id, skill, level, source, confirmed, detected_at")
+    .eq("student_id", user.id)
+    .order("detected_at", { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ skills: data ?? [] });
+});
+
+// ---------- Roadmap ----------
+app.get("/api/roadmap", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const { data, error } = await supabase
+    .from("student_profiles")
+    .select("roadmap_json")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (error) {
+    const msg = error.message?.toLowerCase() ?? "";
+    const missingColumn =
+      msg.includes("roadmap_json") ||
+      msg.includes("column") && msg.includes("does not exist") ||
+      msg.includes("schema cache");
+    if (missingColumn) {
+      // eslint-disable-next-line no-console
+      console.warn("[api/roadmap] colonne roadmap_json absente — exécuter migration_v2.sql sur Supabase :", error.message);
+      return res.json({ roadmap: null });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  return res.json({ roadmap: data?.roadmap_json ?? null });
 });
 
 const port = Number(process.env.BACKEND_PORT || 8090);
