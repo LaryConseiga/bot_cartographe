@@ -19,19 +19,22 @@ import {
   LockClosedIcon,
   PlusIcon,
   ChatBubbleLeftRightIcon,
+  ArrowTopRightOnSquareIcon,
+  WrenchScrewdriverIcon,
+  CpuChipIcon,
 } from "@heroicons/react/24/outline";
 
 const TEAL = "#10A37F";
 const PURPLE = "#6366F1";
 const ORANGE = "#F59E0B";
 
-/** Stockage local : à remplir plus tard quand le chat ou le back renverra un JSON structuré. */
 const ROADMAP_STORAGE_KEY = "apex_ai_roadmap_v1";
 
 export type AiRoadmapCourseItem = {
   badge: string;
   badgeColor: string;
   title: string;
+  url?: string | null;
   duration: string;
   costLabel: string;
   checked?: boolean;
@@ -50,20 +53,41 @@ export type AiRoadmapColumn = {
   items: AiRoadmapCourseItem[];
 };
 
+export type AiRoadmapExercise = {
+  title: string;
+  platform: string;
+  badgeColor: string;
+  url: string;
+  description: string;
+  difficulty: "debutant" | "intermediaire" | "avance";
+};
+
+export type AiRoadmapProject = {
+  title: string;
+  description: string;
+  skills_used: string[];
+  difficulty: "debutant" | "intermediaire" | "avance";
+  inspiration_url?: string | null;
+};
+
 export type AiRoadmapV1 = {
   version: 1;
-  /** `preview` = démo UI ; `stored` = issu du stockage (futur JSON IA) */
   source: "preview" | "stored";
   generatedAt: string;
   targetRole: string;
   profileBasis: string;
   prepIndexPct: number;
   totalHoursRecommended: number;
+  hardSkills?: string[];
+  softSkills?: string[];
+  certifications?: string[];
   columns: AiRoadmapColumn[];
+  exercises?: AiRoadmapExercise[];
+  projects?: AiRoadmapProject[];
 };
 
 const ROADMAP_CHAT_PROMPT =
-  "Propose-moi une roadmap de formation structurée en trois niveaux (quick wins, compétences cœur, long terme) : pour chaque étape, indique plateforme ou ressource, durée estimée, coût approximatif, et un ordre logique. Base-toi sur mon profil et nos échanges. Réponds de façon claire pour que je puisse suivre le plan étape par étape.";
+  "Salut ! Je veux que tu m'aides à construire ma roadmap de formation personnalisée.";
 
 /** Jeu de démonstration — même rendu visuel, présenté comme aperçu jusqu'à génération réelle. */
 const PREVIEW_ROADMAP: AiRoadmapV1 = {
@@ -170,12 +194,143 @@ function formatGeneratedLabel(iso: string): string {
   }
 }
 
+const DIFFICULTY_LABEL: Record<string, string> = {
+  debutant: "Débutant",
+  intermediaire: "Intermédiaire",
+  avance: "Avancé",
+};
+const DIFFICULTY_COLOR: Record<string, string> = {
+  debutant: "#10A37F",
+  intermediaire: "#6366F1",
+  avance: "#F59E0B",
+};
+
+function ExerciseCard({ title, platform, badgeColor, url, description, difficulty }: AiRoadmapExercise) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const diffColor = DIFFICULTY_COLOR[difficulty] ?? PURPLE;
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 2,
+        borderRadius: 2,
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        gap: 1,
+        transition: "box-shadow 0.2s",
+        "&:hover": { boxShadow: isDark ? "0 4px 20px rgba(0,0,0,0.3)" : "0 4px 20px rgba(0,0,0,0.1)" },
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+        <Chip
+          label={platform}
+          size="small"
+          sx={{ height: 22, fontSize: 10, fontWeight: 800, bgcolor: `${badgeColor}22`, color: badgeColor, border: `1px solid ${badgeColor}44` }}
+        />
+        <Chip
+          label={DIFFICULTY_LABEL[difficulty] ?? difficulty}
+          size="small"
+          sx={{ height: 22, fontSize: 10, fontWeight: 700, bgcolor: `${diffColor}18`, color: diffColor, border: `1px solid ${diffColor}35` }}
+        />
+      </Box>
+      <Typography variant="subtitle2" sx={{ fontWeight: 700, fontSize: 14, lineHeight: 1.4 }}>
+        {title}
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12.5, lineHeight: 1.55 }}>
+        {description}
+      </Typography>
+      {url ? (
+        <Box sx={{ mt: 0.5 }}>
+          <Button
+            component="a"
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="small"
+            variant="outlined"
+            endIcon={<ArrowTopRightOnSquareIcon style={{ width: 13, height: 13 }} />}
+            sx={{ textTransform: "none", fontSize: 12, fontWeight: 700, borderColor: badgeColor, color: badgeColor, "&:hover": { bgcolor: `${badgeColor}12` } }}
+          >
+            Pratiquer
+          </Button>
+        </Box>
+      ) : null}
+    </Paper>
+  );
+}
+
+function ProjectCard({ title, description, skills_used, difficulty, inspiration_url }: AiRoadmapProject) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const diffColor = DIFFICULTY_COLOR[difficulty] ?? PURPLE;
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 2.25,
+        borderRadius: 2,
+        border: "1px solid",
+        borderColor: "divider",
+        borderLeft: `4px solid ${diffColor}`,
+        bgcolor: "background.paper",
+        display: "flex",
+        flexDirection: "column",
+        gap: 1.25,
+        transition: "box-shadow 0.2s",
+        "&:hover": { boxShadow: isDark ? "0 4px 20px rgba(0,0,0,0.3)" : "0 4px 20px rgba(0,0,0,0.1)" },
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 800, fontSize: 14.5, lineHeight: 1.35 }}>
+          {title}
+        </Typography>
+        <Chip
+          label={DIFFICULTY_LABEL[difficulty] ?? difficulty}
+          size="small"
+          sx={{ flexShrink: 0, height: 22, fontSize: 10, fontWeight: 700, bgcolor: `${diffColor}18`, color: diffColor, border: `1px solid ${diffColor}35` }}
+        />
+      </Box>
+      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13, lineHeight: 1.65 }}>
+        {description}
+      </Typography>
+      {skills_used.length > 0 ? (
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+          {skills_used.map((s) => (
+            <Chip key={s} label={s} size="small" sx={{ fontSize: 11, fontWeight: 600, height: 22 }} />
+          ))}
+        </Box>
+      ) : null}
+      {inspiration_url ? (
+        <Box>
+          <Button
+            component="a"
+            href={inspiration_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="small"
+            variant="text"
+            endIcon={<ArrowTopRightOnSquareIcon style={{ width: 13, height: 13 }} />}
+            sx={{ textTransform: "none", fontSize: 12, fontWeight: 600, color: "text.secondary", p: 0, minWidth: 0, "&:hover": { color: TEAL, bgcolor: "transparent" } }}
+          >
+            Voir l&apos;inspiration
+          </Button>
+        </Box>
+      ) : null}
+    </Paper>
+  );
+}
+
 type CourseCardProps = AiRoadmapCourseItem;
 
 function CourseCard({
   badge,
   badgeColor,
   title,
+  url,
   duration,
   costLabel,
   checked = false,
@@ -257,6 +412,22 @@ function CourseCard({
               </Typography>
             </Box>
           </Box>
+          {url ? (
+            <Box sx={{ mt: 1.25 }}>
+              <Button
+                component="a"
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="small"
+                variant="contained"
+                endIcon={<ArrowTopRightOnSquareIcon style={{ width: 13, height: 13 }} />}
+                sx={{ textTransform: "none", fontSize: 12, fontWeight: 700, bgcolor: badgeColor, "&:hover": { filter: "brightness(0.88)" }, boxShadow: "none" }}
+              >
+                Voir le cours
+              </Button>
+            </Box>
+          ) : null}
         </Box>
       </Paper>
     );
@@ -352,6 +523,22 @@ function CourseCard({
           </Typography>
         </Box>
       </Box>
+      {url ? (
+        <Box sx={{ mt: 1.25 }}>
+          <Button
+            component="a"
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="small"
+            variant="outlined"
+            endIcon={<ArrowTopRightOnSquareIcon style={{ width: 13, height: 13 }} />}
+            sx={{ textTransform: "none", fontSize: 12, fontWeight: 700, borderColor: badgeColor, color: badgeColor, "&:hover": { bgcolor: `${badgeColor}12` } }}
+          >
+            Voir le cours
+          </Button>
+        </Box>
+      ) : null}
     </Paper>
   );
 }
@@ -411,20 +598,76 @@ function columnIcon(kind: AiRoadmapColumn["icon"], color: string) {
   );
 }
 
+function isOutdatedRoadmap(r: AiRoadmapV1): boolean {
+  // Roadmap générée avant l'ajout des exercices et projets
+  return !r.exercises?.length && !r.projects?.length;
+}
+
 export default function ProgressionPage() {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const router = useRouter();
 
   const [roadmap, setRoadmap] = React.useState<AiRoadmapV1 | null>(null);
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const loadFromServer = React.useCallback(async (updateCache = true) => {
+    setRefreshing(true);
+    try {
+      const { getMyRoadmap } = await import("@/lib/api");
+      const out = await getMyRoadmap();
+      if (out.roadmap) {
+        const parsed = parseStoredRoadmap(JSON.stringify(out.roadmap));
+        if (parsed) {
+          if (updateCache && typeof window !== "undefined") {
+            localStorage.setItem(ROADMAP_STORAGE_KEY, JSON.stringify(out.roadmap));
+          }
+          setRoadmap(parsed);
+        }
+      }
+    } catch { /* ignore */ } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   React.useEffect(() => {
-    const stored = parseStoredRoadmap(typeof window !== "undefined" ? localStorage.getItem(ROADMAP_STORAGE_KEY) : null);
-    setRoadmap(stored ?? PREVIEW_ROADMAP);
+    // 1. Vérification localStorage
+    const raw = typeof window !== "undefined" ? localStorage.getItem(ROADMAP_STORAGE_KEY) : null;
+    const stored = parseStoredRoadmap(raw);
+    if (stored) {
+      setRoadmap(stored);
+      // Si ancienne version, re-fetch depuis le serveur en arrière-plan au cas où une nouvelle a été générée
+      if (isOutdatedRoadmap(stored)) {
+        loadFromServer(true).catch(() => {});
+      }
+    } else {
+      loadFromServer(true).catch(() => {});
+    }
+  }, [loadFromServer]);
+
+  // Écoute les mises à jour depuis d'autres onglets (cross-tab)
+  React.useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== ROADMAP_STORAGE_KEY || !e.newValue) return;
+      const parsed = parseStoredRoadmap(e.newValue);
+      if (parsed) setRoadmap(parsed);
+    }
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // Écoute les mises à jour depuis le même onglet (chat → progression)
+  React.useEffect(() => {
+    function onRoadmapUpdate(e: CustomEvent<AiRoadmapV1>) {
+      setRoadmap(e.detail);
+    }
+    window.addEventListener("apex:roadmap-updated", onRoadmapUpdate as EventListener);
+    return () => window.removeEventListener("apex:roadmap-updated", onRoadmapUpdate as EventListener);
   }, []);
 
   const active = roadmap ?? PREVIEW_ROADMAP;
   const isPreview = active.source === "preview";
+  const isOutdated = !isPreview && isOutdatedRoadmap(active);
   const generatedLabel = formatGeneratedLabel(active.generatedAt);
 
   async function openChatForRoadmap() {
@@ -432,6 +675,7 @@ export default function ProgressionPage() {
       const { createMyChat } = await import("@/lib/api");
       const out = await createMyChat();
       sessionStorage.setItem(`apex_init_msg_${out.chat.id}`, ROADMAP_CHAT_PROMPT);
+      sessionStorage.setItem(`apex_chat_skill_${out.chat.id}`, "apex_progression");
       router.push(`/chat/c/${out.chat.id}`);
     } catch {
       router.push("/chat");
@@ -475,24 +719,37 @@ export default function ProgressionPage() {
                   Dernière synthèse affichée : {generatedLabel}
                 </Typography>
               ) : null}
+              {isOutdated ? (
+                <Chip
+                  label="Ancienne version — régénère pour avoir les cours avec liens, exercices et projets"
+                  size="small"
+                  sx={{ mt: 1, fontWeight: 700, fontSize: 10, height: "auto", py: 0.5, bgcolor: `${ORANGE}22`, color: ORANGE, border: `1px solid ${ORANGE}44`, "& .MuiChip-label": { whiteSpace: "normal" } }}
+                />
+              ) : null}
             </Box>
           </Box>
-          <Button
-            variant="contained"
-            size="medium"
-            onClick={openChatForRoadmap}
-            startIcon={<ChatBubbleLeftRightIcon style={{ width: 18, height: 18 }} />}
-            sx={{
-              flexShrink: 0,
-              fontWeight: 800,
-              textTransform: "none",
-              boxShadow: "none",
-              bgcolor: TEAL,
-              "&:hover": { bgcolor: "#0d8f6a", boxShadow: "none" },
-            }}
-          >
-            {isPreview ? "Générer ma roadmap dans le chat" : "Mettre à jour via le chat"}
-          </Button>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1, flexShrink: 0 }}>
+            <Button
+              variant="contained"
+              size="medium"
+              onClick={openChatForRoadmap}
+              startIcon={<ChatBubbleLeftRightIcon style={{ width: 18, height: 18 }} />}
+              sx={{ fontWeight: 800, textTransform: "none", boxShadow: "none", bgcolor: TEAL, "&:hover": { bgcolor: "#0d8f6a", boxShadow: "none" } }}
+            >
+              {isPreview ? "Générer ma roadmap dans le chat" : "Régénérer via le chat"}
+            </Button>
+            {!isPreview ? (
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={refreshing}
+                onClick={() => loadFromServer(true)}
+                sx={{ fontWeight: 700, textTransform: "none", fontSize: 12, borderColor: "divider", color: "text.secondary", "&:hover": { borderColor: TEAL, color: TEAL } }}
+              >
+                {refreshing ? "Actualisation…" : "↻ Actualiser depuis le serveur"}
+              </Button>
+            ) : null}
+          </Box>
         </Box>
       </Paper>
 
@@ -529,7 +786,29 @@ export default function ProgressionPage() {
         </Box>
       </Box>
 
-      {/* Résumé : 3 cartes (champs alignés sur ce que l'IA pourra remplir) */}
+      {/* Compétences ciblées (hard + soft) — affichées si la roadmap est réelle */}
+      {!isPreview && ((active.hardSkills?.length ?? 0) > 0 || (active.softSkills?.length ?? 0) > 0) ? (
+        <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", mb: 2.5 }}>
+          {(active.hardSkills ?? []).map((s) => (
+            <Chip
+              key={s}
+              label={s}
+              size="small"
+              sx={{ fontWeight: 700, fontSize: 11.5, bgcolor: `${TEAL}18`, color: TEAL, border: `1px solid ${TEAL}35` }}
+            />
+          ))}
+          {(active.softSkills ?? []).map((s) => (
+            <Chip
+              key={s}
+              label={s}
+              size="small"
+              sx={{ fontWeight: 700, fontSize: 11.5, bgcolor: `${PURPLE}18`, color: PURPLE, border: `1px solid ${PURPLE}35` }}
+            />
+          ))}
+        </Box>
+      ) : null}
+
+      {/* Résumé : 3 cartes */}
       <Box
         sx={{
           display: "grid",
@@ -662,7 +941,57 @@ export default function ProgressionPage() {
         ))}
       </Box>
 
-      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 3, lineHeight: 1.65, maxWidth: 760 }}>
+      {/* Section exercices pratiques */}
+      {!isPreview && (active.exercises?.length ?? 0) > 0 ? (
+        <Box sx={{ mt: 4 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mb: 2.5 }}>
+            <WrenchScrewdriverIcon style={{ width: 22, height: 22, color: TEAL }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: -0.2 }}>
+              Exercices pratiques
+            </Typography>
+            <Chip
+              label={`${active.exercises!.length} RESSOURCES`}
+              size="small"
+              sx={{ height: 24, fontSize: 10, fontWeight: 800, bgcolor: `${TEAL}18`, color: TEAL, border: `1px solid ${TEAL}35` }}
+            />
+          </Box>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(3, 1fr)" },
+              gap: 2,
+            }}
+          >
+            {active.exercises!.map((ex, idx) => (
+              <ExerciseCard key={idx} {...ex} />
+            ))}
+          </Box>
+        </Box>
+      ) : null}
+
+      {/* Section projets portfolio */}
+      {!isPreview && (active.projects?.length ?? 0) > 0 ? (
+        <Box sx={{ mt: 4 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mb: 2.5 }}>
+            <CpuChipIcon style={{ width: 22, height: 22, color: PURPLE }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 800, letterSpacing: -0.2 }}>
+              Projets à réaliser
+            </Typography>
+            <Chip
+              label={`${active.projects!.length} PROJETS`}
+              size="small"
+              sx={{ height: 24, fontSize: 10, fontWeight: 800, bgcolor: `${PURPLE}18`, color: PURPLE, border: `1px solid ${PURPLE}35` }}
+            />
+          </Box>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {active.projects!.map((proj, idx) => (
+              <ProjectCard key={idx} {...proj} />
+            ))}
+          </Box>
+        </Box>
+      ) : null}
+
+      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 4, lineHeight: 1.65, maxWidth: 760 }}>
         Les parcours, durées et coûts sont indicatifs : vérifie auprès des plateformes et adapte selon ta situation.
         L&apos;assistant peut se tromper ou omettre des contraintes locales — croise toujours avec des sources officielles.
       </Typography>

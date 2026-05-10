@@ -137,7 +137,7 @@ function SidebarContent(props: { onNavigate?: () => void }) {
           setRecents(
             (out.chats || []).map((c) => ({
               id: c.id,
-              title: c.session_ref || "Chat",
+              title: c.title || c.session_ref || "Chat",
             }))
           );
         } catch {

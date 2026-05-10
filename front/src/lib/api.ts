@@ -32,7 +32,7 @@ export type ChatStatusEvent = {
 
 /**
  * Corps de requête comme dans `llm/index.html` : `{ messages, stream: true }`,
- * avec `skill` / `cvText` seulement si nécessaire (extensions Apex).
+ * avec `skill` / `cvText` / `student_id` seulement si disponibles.
  */
 export function buildLlmChatBody(
   messages: LlmChatMessage[],
@@ -42,8 +42,12 @@ export function buildLlmChatBody(
   const sk = options.skill ?? DEFAULT_LLM_SKILL;
   if (sk !== DEFAULT_LLM_SKILL) body.skill = sk;
   if (options.cvText?.trim()) body.cvText = options.cvText.trim();
+  const studentId = resolveStudentIdForLlm();
+  if (studentId) body.student_id = studentId;
   return body;
 }
+
+export const ROADMAP_STORAGE_KEY = "apex_ai_roadmap_v1";
 
 /**
  * Consomme le flux SSE du Flask (même logique que la boucle dans `index.html`).
@@ -53,6 +57,7 @@ export async function consumeLlmChatSse(
   handlers: {
     onToken?: (token: string) => void;
     onStatus?: (evt: ChatStatusEvent) => void;
+    onRoadmap?: (data: unknown) => void;
     onDone?: () => void;
   }
 ): Promise<string> {
@@ -77,6 +82,10 @@ export async function consumeLlmChatSse(
     }
     if (rec.type === "status") {
       handlers.onStatus?.(rec as ChatStatusEvent);
+      return false;
+    }
+    if (rec.type === "roadmap" && rec.data) {
+      handlers.onRoadmap?.(rec.data);
       return false;
     }
     if (typeof rec.token === "string") {
@@ -151,10 +160,40 @@ export async function summarizeThread(messages: { role: string; content: string 
 
 /** Même clé côté client : le back accepte cookie HttpOnly OU Bearer (voir requireUser). */
 export const ACCESS_TOKEN_STORAGE_KEY = "apexai_access_token";
+export const STUDENT_ID_STORAGE_KEY = "apexai_student_id";
 
 function getStoredAccessToken(): string | null {
   if (typeof window === "undefined") return null;
   return sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+}
+
+export function getStoredStudentId(): string | null {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(STUDENT_ID_STORAGE_KEY);
+}
+
+/** Décode le `sub` du JWT access (sans vérifier la signature) pour retrouver l'UUID si la sessionStorage a été vidée. */
+function decodeJwtSub(token: string | null): string | null {
+  if (!token) return null;
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+    const json = JSON.parse(atob(b64 + pad)) as { sub?: string };
+    return typeof json.sub === "string" ? json.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveStudentIdForLlm(): string | null {
+  if (typeof window === "undefined") return null;
+  let id = getStoredStudentId();
+  if (id) return id;
+  id = decodeJwtSub(getStoredAccessToken());
+  if (id) sessionStorage.setItem(STUDENT_ID_STORAGE_KEY, id);
+  return id;
 }
 
 function applyAuthHeaders(headers: Headers) {
@@ -167,6 +206,12 @@ function persistSessionToken(session: { access_token?: string } | null | undefin
   const t = session?.access_token;
   if (t) sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, t);
   else sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+}
+
+function persistStudentId(userId: string | null | undefined) {
+  if (typeof window === "undefined") return;
+  if (userId) sessionStorage.setItem(STUDENT_ID_STORAGE_KEY, userId);
+  else sessionStorage.removeItem(STUDENT_ID_STORAGE_KEY);
 }
 
 /** Utilisé par AppShell : ne rediriger vers /connexion que sur 401 réel, pas sur erreur réseau / 502. */
@@ -213,6 +258,7 @@ export async function signup(payload: {
     body: JSON.stringify(payload)
   });
   persistSessionToken(out.session);
+  persistStudentId(out.user?.id ?? null);
   return out;
 }
 
@@ -222,22 +268,34 @@ export async function login(payload: { email: string; password: string }) {
     body: JSON.stringify(payload)
   });
   persistSessionToken(out.session);
+  persistStudentId(out.user?.id ?? null);
   return out;
 }
 
 export async function logout() {
-  if (typeof window !== "undefined") sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  if (typeof window !== "undefined") {
+    sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(STUDENT_ID_STORAGE_KEY);
+  }
   return request<{ ok: true }>("/auth/logout", { method: "POST" });
 }
 
 export type ChatSession = {
   id: string;
   session_ref: string;
+  title: string | null;
   last_active: string;
 };
 
 export async function listMyChats() {
   return request<{ chats: ChatSession[] }>("/api/my/chats");
+}
+
+export async function updateChatTitle(sessionId: string, title: string) {
+  return request<{ chat: ChatSession }>(`/api/my/chats/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title })
+  });
 }
 
 export async function createMyChat(session_ref?: string) {
@@ -273,7 +331,9 @@ export type StudentProfile = {
 };
 
 export async function getMyProfile() {
-  return request<{ profile: StudentProfile | null }>("/api/profile");
+  const out = await request<{ profile: StudentProfile | null }>("/api/profile");
+  if (out.profile?.id) persistStudentId(out.profile.id);
+  return out;
 }
 
 export async function updateMyProfile(patch: Partial<StudentProfile>) {
@@ -331,6 +391,10 @@ export async function sendMessage(sessionId: string, content: string) {
   });
 }
 
+export async function getMyRoadmap() {
+  return request<{ roadmap: unknown | null }>("/api/roadmap");
+}
+
 export async function saveAssistantMessage(sessionId: string, content: string) {
   const max = 8000;
   const body = content.length > max ? content.slice(0, max) : content;
@@ -340,11 +404,41 @@ export async function saveAssistantMessage(sessionId: string, content: string) {
   });
 }
 
+export type StudentSkill = {
+  id: string;
+  skill: string;
+  level: string | null;
+  source: string;
+  confirmed: boolean;
+  detected_at: string;
+};
+
+export async function getMySkills() {
+  return request<{ skills: StudentSkill[] }>("/api/my/skills");
+}
+
+export async function analyzeCvWithLlm(
+  cvText: string,
+  onToken?: (token: string) => void
+): Promise<void> {
+  const messages: LlmChatMessage[] = [
+    { role: "user", content: "Analyse mon CV et extrait toutes mes competences." }
+  ];
+  const res = await fetch(llmEndpoint("chat"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildLlmChatBody(messages, { skill: "apex_cv_analyzer", cvText }))
+  });
+  if (!res.ok) throw new Error(`Service LLM indisponible (HTTP ${res.status})`);
+  await consumeLlmChatSse(res, { onToken });
+}
+
 export type StreamChatOptions = {
   cvText?: string;
   skill?: string;
   onToken?: (token: string) => void;
   onStatus?: (evt: ChatStatusEvent) => void;
+  onRoadmap?: (data: unknown) => void;
   onDone?: () => void;
 };
 
@@ -358,7 +452,7 @@ export async function streamChatMessage(
   message: string,
   options: StreamChatOptions = {}
 ): Promise<void> {
-  const { cvText, skill = DEFAULT_LLM_SKILL, onToken, onStatus, onDone } = options;
+  const { cvText, skill = DEFAULT_LLM_SKILL, onToken, onStatus, onRoadmap, onDone } = options;
 
   await sendMessage(sessionId, message);
   const history = await listMessages(sessionId);
@@ -382,7 +476,7 @@ export async function streamChatMessage(
     throw new Error(txt || `HTTP ${res.status}`);
   }
 
-  const assistantText = await consumeLlmChatSse(res, { onToken, onStatus, onDone });
+  const assistantText = await consumeLlmChatSse(res, { onToken, onStatus, onRoadmap, onDone });
   const toSave = assistantText.trim();
   if (toSave) {
     await saveAssistantMessage(sessionId, toSave);

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import TextField from "@mui/material/TextField";
@@ -22,6 +23,14 @@ import {
 const LOGO_SRC = "/ChatGPT Image May 7, 2026, 01_41_46 PM.png";
 
 type Message = { id: string; role: string; content: string };
+
+function makeChatTitle(content: string): string {
+  const clean = content.trim().replace(/\s+/g, " ");
+  if (clean.length <= 50) return clean;
+  const cut = clean.slice(0, 50);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+}
 
 function StatusBanner({
   message,
@@ -138,20 +147,28 @@ export default function ChatThreadPage() {
   const [streamingText, setStreamingText] = React.useState("");
   const [chatError, setChatError] = React.useState<string | null>(null);
   const [uploadingCv, setUploadingCv] = React.useState(false);
-  const [summaryOpen, setSummaryOpen] = React.useState(false);
-  const [summaryText, setSummaryText] = React.useState("");
-  const [summarizing, setSummarizing] = React.useState(false);
+  const [cvAttached, setCvAttached] = React.useState<{ text: string; fileName: string } | null>(null);
+  const [roadmapReady, setRoadmapReady] = React.useState(false);
   const streamingAcc = React.useRef("");
   const sendingLock = React.useRef(false);
   const initSentRef = React.useRef(false);
+  const messagesSentRef = React.useRef(0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const hasText = text.trim().length > 0;
+  const canSend = hasText || cvAttached !== null;
   const bottomRef = React.useRef<HTMLDivElement>(null);
+
+  const chatSkill = React.useMemo(
+    () => (typeof window !== "undefined" ? sessionStorage.getItem(`apex_chat_skill_${sessionId}`) ?? undefined : undefined),
+    [sessionId]
+  );
 
   const sendContent = React.useCallback(
     async (content: string, opts?: { cvText?: string }) => {
       const messageForApi = content.trim() || (opts?.cvText ? "J'ai importé mon CV." : "");
       if (!messageForApi || sendingLock.current) return;
+      const isFirstMessage = messagesSentRef.current === 0;
+      messagesSentRef.current += 1;
       sendingLock.current = true;
       setSending(true);
       setStatusBanner(null);
@@ -165,10 +182,11 @@ export default function ChatThreadPage() {
       let assistantSynced = "";
 
       try {
-        const { streamChatMessage, listMessages } = await import("@/lib/api");
+        const { streamChatMessage, listMessages, ROADMAP_STORAGE_KEY, updateChatTitle } = await import("@/lib/api");
         let firstToken = true;
         await streamChatMessage(sessionId, messageForApi, {
           cvText: opts?.cvText,
+          skill: chatSkill,
           onToken: (token) => {
             if (firstToken) {
               firstToken = false;
@@ -182,6 +200,16 @@ export default function ChatThreadPage() {
             if (evt.type === "status" && evt.message) {
               setStatusBanner({ message: evt.message, phase: evt.phase || "" });
             }
+          },
+          onRoadmap: (data) => {
+            try {
+              if (typeof window !== "undefined") {
+                localStorage.setItem(ROADMAP_STORAGE_KEY, JSON.stringify(data));
+                // Notifie la page Progression si elle est ouverte dans le même onglet
+                window.dispatchEvent(new CustomEvent("apex:roadmap-updated", { detail: data }));
+              }
+              setRoadmapReady(true);
+            } catch { /* ignore */ }
           },
         });
         assistantSynced = streamingAcc.current;
@@ -211,6 +239,9 @@ export default function ChatThreadPage() {
             mergeLocalReply();
           } else {
             setMessages(rows.map((m) => ({ id: m.id, role: m.role, content: m.content })));
+          }
+          if (isFirstMessage) {
+            updateChatTitle(sessionId, makeChatTitle(messageForApi)).catch(() => {});
           }
         } catch (reloadErr) {
           // eslint-disable-next-line no-console
@@ -281,50 +312,12 @@ export default function ChatThreadPage() {
   }, [messages, streamingText, statusBanner, sending]);
 
   function handleSend() {
-    const content = text.trim();
-    if (!content || sending || uploadingCv) return;
+    if (!canSend || sending || uploadingCv) return;
+    const content = text.trim() || (cvAttached ? "J'ai importé mon CV." : "");
+    const cv = cvAttached;
     setText("");
-    void sendContent(content);
-  }
-
-  async function handleSummarize() {
-    const pairs = messages
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, content: m.content }));
-    if (pairs.length === 0) {
-      setSummaryText("Aucune conversation à résumer.");
-      setSummaryOpen(true);
-      return;
-    }
-    setSummarizing(true);
-    setSummaryOpen(true);
-    setSummaryText("Génération du résumé…");
-    try {
-      const { summarizeThread } = await import("@/lib/api");
-      const s = await summarizeThread(pairs);
-      setSummaryText(s);
-    } catch (e) {
-      setSummaryText(`Erreur : ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setSummarizing(false);
-    }
-  }
-
-  async function handleNewChat() {
-    if (
-      messages.length > 0 &&
-      typeof window !== "undefined" &&
-      !window.confirm("Ouvrir une nouvelle conversation ? La session actuelle reste dans ton historique.")
-    ) {
-      return;
-    }
-    try {
-      const { createMyChat } = await import("@/lib/api");
-      const out = await createMyChat();
-      router.push(`/chat/c/${out.chat.id}`);
-    } catch {
-      setChatError("Impossible de créer une nouvelle conversation.");
-    }
+    setCvAttached(null);
+    void sendContent(content, cv ? { cvText: cv.text } : undefined);
   }
 
   async function handleCvFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -340,10 +333,12 @@ export default function ChatThreadPage() {
       let cvText: string;
 
       const lower = file.name.toLowerCase();
-      const isPdf = file.type === "application/pdf" || lower.endsWith(".pdf");
-      const isTxt = file.type.startsWith("text/") || lower.endsWith(".txt");
+      const mt = (file.type || "").toLowerCase();
+      const isPdf = mt === "application/pdf" || lower.endsWith(".pdf");
+      const isTxt = mt.startsWith("text/") || lower.endsWith(".txt");
+      const isImage = mt.startsWith("image/") || /\.(jpe?g|png|webp)$/.test(lower);
 
-      if (isPdf) {
+      if (isPdf || isImage) {
         const out = await uploadCvPdf(file);
         cvText = out.cvText;
       } else if (isTxt) {
@@ -352,16 +347,16 @@ export default function ChatThreadPage() {
         await updateMyProfile({ cv_text: forProfile });
         cvText = raw.slice(0, 12_000);
       } else {
-        setChatError("Formats acceptés : PDF ou fichier texte (.txt).");
+        setChatError("Formats acceptés : PDF, image (JPG, PNG, WebP) ou fichier texte (.txt).");
         return;
       }
 
       if (!cvText.trim()) {
-        setChatError("Le fichier semble vide.");
+        setChatError("Le fichier semble vide ou illisible.");
         return;
       }
 
-      await sendContent("J'ai importé mon CV.", { cvText });
+      setCvAttached({ text: cvText, fileName: file.name });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("[chat] import CV:", err);
@@ -381,70 +376,6 @@ export default function ChatThreadPage() {
         >
           {chatError}
         </Alert>
-      ) : null}
-
-      <Box
-        sx={{
-          maxWidth: 860,
-          width: "100%",
-          mx: "auto",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 1,
-          flexWrap: "wrap",
-          py: 1,
-        }}
-      >
-        <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600 }}>
-          ApexAI — Chat Groq
-        </Typography>
-        <Box sx={{ display: "flex", gap: 1, flexShrink: 0 }}>
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={sending || summarizing || uploadingCv}
-            onClick={() => void handleSummarize()}
-          >
-            Résumer
-          </Button>
-          <Button
-            size="small"
-            variant="outlined"
-            disabled={sending || uploadingCv}
-            onClick={() => void handleNewChat()}
-          >
-            Nouvelle conversation
-          </Button>
-        </Box>
-      </Box>
-
-      {summaryOpen ? (
-        <Paper
-          elevation={0}
-          sx={{
-            maxWidth: 860,
-            width: "100%",
-            mx: "auto",
-            mb: 2,
-            p: 2,
-            border: "1px solid",
-            borderColor: "divider",
-            borderLeft: "3px solid",
-            borderLeftColor: "primary.main",
-            bgcolor: "action.hover",
-          }}
-        >
-          <Typography
-            variant="caption"
-            sx={{ fontWeight: 700, color: "primary.main", letterSpacing: 0.5, display: "block", mb: 1 }}
-          >
-            Résumé de la conversation
-          </Typography>
-          <Typography variant="body2" sx={{ whiteSpace: "pre-wrap", lineHeight: 1.65 }}>
-            {summaryText}
-          </Typography>
-        </Paper>
       ) : null}
 
       {/* Messages */}
@@ -516,11 +447,65 @@ export default function ChatThreadPage() {
                 />
               ))}
             </Box>
+            {uploadingCv && !sending ? (
+              <Typography variant="caption" sx={{ opacity: 0.55, fontSize: 12.5, ml: 0.5 }}>
+                Extraction du CV en cours…
+              </Typography>
+            ) : null}
           </Box>
         ) : null}
 
         <div ref={bottomRef} />
       </Box>
+
+      {/* Notification roadmap prête */}
+      {roadmapReady ? (
+        <Paper
+          elevation={0}
+          sx={{
+            maxWidth: 860,
+            width: "100%",
+            mx: "auto",
+            mb: 1.5,
+            p: 1.5,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 2,
+            border: "1px solid rgba(16,163,127,0.4)",
+            bgcolor: "rgba(16,163,127,0.08)",
+            borderRadius: 2,
+          }}
+        >
+          <Typography variant="body2" sx={{ fontSize: 13.5, fontWeight: 600 }}>
+            Ta roadmap est prête !
+          </Typography>
+          <Button
+            onClick={() => router.push("/chat/progression")}
+            size="small"
+            variant="contained"
+            sx={{
+              flexShrink: 0,
+              fontWeight: 700,
+              textTransform: "none",
+              bgcolor: "#10A37F",
+              "&:hover": { bgcolor: "#0d8f6a" },
+              boxShadow: "none",
+            }}
+          >
+            Voir la Progression
+          </Button>
+        </Paper>
+      ) : null}
+
+      {/* Input fichier hors du form pour éviter tout conflit de soumission */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.txt,.jpg,.jpeg,.png,.webp,application/pdf,text/plain,image/jpeg,image/png,image/webp"
+        style={{ display: "none" }}
+        onChange={handleCvFileSelected}
+      />
 
       {/* Barre d'input */}
       <Box
@@ -540,13 +525,25 @@ export default function ChatThreadPage() {
           }}
           sx={{ maxWidth: 860, width: "100%", mx: "auto" }}
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf,.txt,application/pdf,text/plain"
-            style={{ display: "none" }}
-            onChange={handleCvFileSelected}
-          />
+          {/* Chip CV attaché */}
+          {cvAttached ? (
+            <Box sx={{ px: 1, pb: 0.75 }}>
+              <Chip
+                label={`CV : ${cvAttached.fileName}`}
+                size="small"
+                onDelete={() => setCvAttached(null)}
+                sx={{
+                  bgcolor: "rgba(16,163,127,0.15)",
+                  color: "primary.main",
+                  border: "1px solid rgba(16,163,127,0.3)",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  "& .MuiChip-deleteIcon": { color: "primary.main", opacity: 0.7 },
+                }}
+              />
+            </Box>
+          ) : null}
+
           <Paper
             elevation={0}
             sx={{
@@ -556,7 +553,7 @@ export default function ChatThreadPage() {
               gap: 0.5,
               borderRadius: "18px",
               border: "1px solid",
-              borderColor: "divider",
+              borderColor: cvAttached ? "rgba(16,163,127,0.4)" : "divider",
               boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
               "&:focus-within": { borderColor: "rgba(16,163,127,0.5)" },
               transition: "border-color 0.2s",
@@ -566,14 +563,14 @@ export default function ChatThreadPage() {
               type="button"
               aria-label="Importer un CV (PDF ou texte)"
               size="small"
-              sx={{ ml: 0.5, opacity: 0.55 }}
+              sx={{ ml: 0.5, opacity: cvAttached ? 1 : 0.55, color: cvAttached ? "primary.main" : "inherit" }}
               disabled={sending || uploadingCv}
               onClick={() => fileInputRef.current?.click()}
             >
               <PlusIcon style={{ width: 18, height: 18 }} />
             </IconButton>
             <TextField
-              placeholder="Posez votre question à ApexAI…"
+              placeholder={cvAttached ? "Ajoutez un message ou envoyez directement…" : "Posez votre question à ApexAI…"}
               variant="standard"
               fullWidth
               slotProps={{ input: { disableUnderline: true } }}
@@ -594,24 +591,24 @@ export default function ChatThreadPage() {
               <MicrophoneIcon style={{ width: 18, height: 18 }} />
             </IconButton>
             <IconButton
-              type={hasText ? "submit" : "button"}
-              aria-label={hasText ? "Envoyer le message" : "Saisis un message pour envoyer (audio à venir)"}
+              type={canSend ? "submit" : "button"}
+              aria-label={canSend ? "Envoyer le message" : "Saisis un message pour envoyer (audio à venir)"}
               disabled={sending || uploadingCv}
               onClick={(e) => {
-                if (!hasText) e.preventDefault();
+                if (!canSend) e.preventDefault();
               }}
               sx={{
                 mr: 0.5,
-                bgcolor: hasText ? "primary.main" : "rgba(255,255,255,0.07)",
-                color: hasText ? "white" : "text.secondary",
-                "&:hover": { bgcolor: hasText ? "#0d8a6b" : "rgba(255,255,255,0.10)" },
+                bgcolor: canSend ? "primary.main" : "rgba(255,255,255,0.07)",
+                color: canSend ? "white" : "text.secondary",
+                "&:hover": { bgcolor: canSend ? "#0d8a6b" : "rgba(255,255,255,0.10)" },
                 "&.Mui-disabled": { bgcolor: "rgba(255,255,255,0.05)", color: "text.secondary" },
                 width: 36,
                 height: 36,
                 transition: "background-color 0.2s",
               }}
             >
-              {hasText ? (
+              {canSend ? (
                 <ArrowUpIcon style={{ width: 18, height: 18 }} />
               ) : (
                 <SpeakerWaveIcon style={{ width: 18, height: 18 }} />
