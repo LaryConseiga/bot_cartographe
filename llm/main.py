@@ -1,4 +1,5 @@
 from pathlib import Path
+import inspect
 import json
 import os
 import re
@@ -28,7 +29,6 @@ def _manual_load_dotenv(path: Path, *, override: bool) -> bool:
     return True
 
 
-# Racine du repo → llm/.env (ce dernier peut surcharger). Fonctionne même sans python-dotenv.
 def _load_env_files() -> None:
     here = Path(__file__).resolve().parent
     root = here.parent
@@ -38,7 +38,6 @@ def _load_env_files() -> None:
             loaded.append(str(path))
     try:
         from dotenv import load_dotenv
-
         for path, override in ((root / ".env", False), (here / ".env", True)):
             if path.is_file():
                 load_dotenv(path, override=override)
@@ -47,7 +46,7 @@ def _load_env_files() -> None:
     if loaded:
         print("[env] .env chargés :", " puis ".join(loaded))
     elif not (root / ".env").is_file() and not (here / ".env").is_file():
-        print("[env] Aucun .env à la racine du repo ni dans llm/ — ajoute GROQ_API_KEY dans l’un des deux.")
+        print("[env] Aucun .env à la racine du repo ni dans llm/ — ajoute GROQ_API_KEY dans l'un des deux.")
 
 
 _load_env_files()
@@ -65,9 +64,19 @@ from flask_cors import CORS
 from groq import Groq
 from tavily import TavilyClient
 
+# ── Supabase DB tools (optionnel — désactivé si supabase n'est pas installé) ──
+try:
+    from db_tools import DB_TOOLS, DB_TOOL_FUNCTIONS
+    from supabase_client import get_supabase
+    DB_TOOLS_AVAILABLE = True
+except ImportError:
+    DB_TOOLS = []
+    DB_TOOL_FUNCTIONS = {}
+    DB_TOOLS_AVAILABLE = False
+    print("[env] supabase non installé — outils DB désactivés. Lance : pip install supabase>=2.0")
+
 app = Flask(__name__)
 
-# Origines autorisées pour le front (Next) qui appelle /chat directement.
 _cors_raw = os.environ.get(
     "FLASK_CORS_ORIGINS",
     "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
@@ -75,7 +84,6 @@ _cors_raw = os.environ.get(
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 CORS(app, resources={r"/*": {"origins": _cors_origins or "*"}})
 
-# === Clés API (variables d’environnement — ne pas committer de secrets) ===
 GROQ_API_KEY = _read_groq_key()
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "").strip()
 
@@ -107,51 +115,59 @@ def list_skills() -> list:
     return sorted(p.stem for p in SKILLS_DIR.glob("*.md"))
 
 
-# === Outils Groq (recherche web) — uniquement si Tavily est configuré ===
-def _build_tools():
-    if not tavily_client:
-        return []
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "tavily_search",
-                "description": (
-                    "Recherche des informations à jour sur le web. "
-                    "À utiliser pour : données salariales locales en Afrique de l'Ouest, "
-                    "offres d'emploi actuelles, formations certifiantes, vérification "
-                    "d'informations sur entreprises/écoles africaines, statistiques marché emploi. "
-                    "Ne pas utiliser pour les conversations générales."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Requête de recherche en français, précise et ciblée. "
-                            "Ex: 'salaire data analyst Dakar Sénégal junior 2026'",
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Nombre de résultats (entre 3 et 8, défaut 5)",
-                            "default": 5,
-                        },
-                    },
-                    "required": ["query"],
+# === Outils Groq ===
+
+_TAVILY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "tavily_search",
+        "description": (
+            "Recherche des informations à jour sur le web. "
+            "À utiliser pour : données salariales locales en Afrique de l'Ouest, "
+            "offres d'emploi actuelles, formations certifiantes, vérification "
+            "d'informations sur entreprises/écoles africaines, statistiques marché emploi. "
+            "Ne pas utiliser pour les conversations générales."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Requête de recherche en français, précise et ciblée.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Nombre de résultats (entre 3 et 8, défaut 5)",
+                    "default": 5,
                 },
             },
-        }
-    ]
+            "required": ["query"],
+        },
+    },
+}
+
+
+def _build_tools() -> list:
+    tools = []
+    if tavily_client:
+        tools.append(_TAVILY_TOOL)
+    if DB_TOOLS_AVAILABLE:
+        tools.extend(DB_TOOLS)
+    return tools
 
 
 TOOLS = _build_tools()
 
 
-def execute_tool_call(tool_name: str, arguments: dict) -> str:
-    """Exécute un appel d'outil et renvoie le résultat sous forme de string JSON."""
+def execute_tool_call(tool_name: str, arguments: dict, student_id: str = "") -> tuple[str, dict | None]:
+    """
+    Exécute un appel d'outil.
+    Retourne (result_json_string, sse_side_effect_or_None).
+    Le side-effect sera émis comme événement SSE supplémentaire avant de continuer la boucle.
+    """
     if tool_name == "tavily_search":
         if not tavily_client:
-            return json.dumps({"error": "Recherche web non configurée (TAVILY_API_KEY)."}, ensure_ascii=False)
+            return json.dumps({"error": "Recherche web non configurée (TAVILY_API_KEY)."}, ensure_ascii=False), None
         query = arguments.get("query", "")
         max_results = min(max(arguments.get("max_results", 5), 3), 8)
         try:
@@ -161,20 +177,93 @@ def execute_tool_call(tool_name: str, arguments: dict) -> str:
                 search_depth="basic",
                 include_answer=True,
             )
-            results = []
-            for r in response.get("results", []):
-                results.append({
+            results = [
+                {
                     "title": r.get("title", ""),
                     "url": r.get("url", ""),
-                    "content": r.get("content", "")[:500],  # tronqué pour économiser tokens
-                })
-            return json.dumps({
-                "answer": response.get("answer", ""),
-                "results": results,
-            }, ensure_ascii=False)
+                    "content": r.get("content", "")[:500],
+                }
+                for r in response.get("results", [])
+            ]
+            return json.dumps({"answer": response.get("answer", ""), "results": results}, ensure_ascii=False), None
         except Exception as e:
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
-    return json.dumps({"error": f"Outil inconnu : {tool_name}"}, ensure_ascii=False)
+            return json.dumps({"error": str(e)}, ensure_ascii=False), None
+
+    if tool_name in DB_TOOL_FUNCTIONS:
+        if not DB_TOOLS_AVAILABLE:
+            return json.dumps({"error": "Outils base de données non disponibles."}, ensure_ascii=False), None
+        fn = DB_TOOL_FUNCTIONS[tool_name]
+        if "student_id" in inspect.signature(fn).parameters and student_id:
+            arguments = {**(arguments if isinstance(arguments, dict) else {}), "student_id": student_id}
+        try:
+            result = fn(**arguments)
+            # generate_roadmap returns (str, dict|None); other tools return str
+            if isinstance(result, tuple):
+                return result
+            return result, None
+        except Exception as e:
+            return json.dumps({"error": str(e)}, ensure_ascii=False), None
+
+    return json.dumps({"error": f"Outil inconnu : {tool_name}"}, ensure_ascii=False), None
+
+
+def _build_student_context_block(student_id: str) -> str:
+    """Charge le contexte étudiant depuis Supabase et le formate pour le system prompt."""
+    if not DB_TOOLS_AVAILABLE or not student_id:
+        return ""
+    try:
+        from db_tools import get_student_context
+        raw = get_student_context(student_id)
+        ctx = json.loads(raw)
+        if "error" in ctx:
+            return ""
+        profile = ctx.get("profile") or {}
+        skills = ctx.get("skills") or []
+        gap = ctx.get("latest_gap_report")
+
+        lines = ["\n---", "Contexte étudiant (base de données) :"]
+        if profile.get("full_name"):
+            lines.append(f"Nom : {profile['full_name']}")
+        if profile.get("country"):
+            lines.append(f"Pays : {profile['country']}")
+        if profile.get("city"):
+            lines.append(f"Ville : {profile['city']}")
+        if profile.get("field_of_study"):
+            lines.append(f"Domaine d'études : {profile['field_of_study']}")
+        if profile.get("school"):
+            lines.append(f"École : {profile['school']}")
+        if profile.get("graduation_year"):
+            lines.append(f"Année de diplôme : {profile['graduation_year']}")
+        if profile.get("target_role"):
+            lines.append(f"Poste ciblé : {profile['target_role']}")
+        if profile.get("target_country"):
+            lines.append(f"Pays cible : {profile['target_country']}")
+        if profile.get("target_sector"):
+            lines.append(f"Secteur cible : {profile['target_sector']}")
+
+        if skills:
+            hard = [s["skill"] for s in skills if s.get("source") == "cv_hard"]
+            soft = [s["skill"] for s in skills if s.get("source") == "cv_soft"]
+            tools_list = [s["skill"] for s in skills if s.get("source") == "cv_tool"]
+            if hard:
+                lines.append(f"Compétences techniques : {', '.join(hard)}")
+            if soft:
+                lines.append(f"Compétences comportementales : {', '.join(soft)}")
+            if tools_list:
+                lines.append(f"Outils maîtrisés : {', '.join(tools_list)}")
+
+        if gap:
+            lines.append(f"Dernière analyse — score : {gap.get('global_score')}/100")
+            if gap.get("missing_skills"):
+                lines.append(f"Lacunes identifiées : {', '.join(gap['missing_skills'])}")
+
+        if len(lines) <= 2:
+            return ""
+
+        lines.append("---\n")
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 # === Routes ===
@@ -197,6 +286,15 @@ def _groq_completion_kwargs(messages, *, stream: bool):
     return kw
 
 
+_DB_TOOL_STATUS = {
+    "get_student_context": "Apex consulte ton profil…",
+    "save_cv_skills": "Apex enregistre tes compétences…",
+    "get_skills_market": "Apex consulte les tendances du marché…",
+    "save_gap_analysis": "Apex sauvegarde ton analyse…",
+    "generate_roadmap": "Apex génère ta roadmap personnalisée…",
+}
+
+
 @app.route("/chat", methods=["POST"])
 def chat():
     """
@@ -204,24 +302,24 @@ def chat():
       "messages": [{"role":"user|assistant","content":"..."}],
       "stream": true,
       "skill": "apex_conversationalist",
-      "cvText": "..." (optionnel, injecté dans le prompt système)
+      "cvText": "...",
+      "student_id": "uuid-de-l-etudiant"
     }
     """
     try:
         if not groq_client:
-            return jsonify(
-                {
-                    "error": (
-                        "GROQ_API_KEY manquant. Ajoute GROQ_API_KEY=gsk_... dans bot_cartographe/.env "
-                        "ou llm/.env, puis redémarre Flask. Vérifie : pip install python-dotenv"
-                    )
-                }
-            ), 503
+            return jsonify({
+                "error": (
+                    "GROQ_API_KEY manquant. Ajoute GROQ_API_KEY=gsk_... dans bot_cartographe/.env "
+                    "ou llm/.env, puis redémarre Flask."
+                )
+            }), 503
 
         data = request.get_json()
         messages = data.get("messages", [])
         skill_name = data.get("skill", "apex_conversationalist")
         cv_text = data.get("cvText") or data.get("cv_text") or ""
+        student_id = (data.get("student_id") or "").strip()
 
         if not messages:
             return jsonify({"error": "Le champ 'messages' est requis"}), 400
@@ -231,6 +329,7 @@ def chat():
         except FileNotFoundError as e:
             return jsonify({"error": str(e)}), 400
 
+        # Injecter le CV dans le system prompt si fourni
         if isinstance(cv_text, str) and cv_text.strip():
             excerpt = cv_text.strip()[:12000]
             system_prompt = (
@@ -240,42 +339,56 @@ def chat():
                 + "\n---\n"
             )
 
+        # Injecter le contexte étudiant depuis Supabase (si student_id connu)
+        student_context_block = _build_student_context_block(student_id)
+        if student_context_block:
+            system_prompt = system_prompt + student_context_block
+
         full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
 
         def generate():
-            """
-            Boucle d'orchestration :
-            1. Appel non-streaming pour détecter d'éventuels tool_calls
-            2. Si tool_calls : exécuter, ajouter au contexte, recommencer
-            3. Sinon (ou après exécution) : appel streaming pour générer la réponse finale
-            """
             current_messages = full_messages.copy()
-            max_iterations = 3  # garde-fou contre les boucles infinies
+            max_iterations = 5
             iteration = 0
 
             while iteration < max_iterations:
                 iteration += 1
 
-                # Étape 1 : appel non-streaming pour voir si le LLM veut un outil
                 try:
                     completion = groq_client.chat.completions.create(
                         **_groq_completion_kwargs(current_messages, stream=False)
                     )
                 except Exception as e:
                     msg = str(e)
-                    if "invalid_api_key" in msg or "Invalid API Key" in msg:
-                        yield f"data: {json.dumps({'error': 'Clé Groq invalide (invalid_api_key). Génère une nouvelle clé dans Groq, mets GROQ_API_KEY à jour, puis redémarre llm.'}, ensure_ascii=False)}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'error': msg or 'Erreur Groq'}, ensure_ascii=False)}\n\n"
+                    # Si Groq rejette l'appel d'outil (format invalide / unicode mal encodé)
+                    # → retry en texte simple sans outils
+                    if "tool_use_failed" in msg or "failed_generation" in msg:
+                        try:
+                            plain_stream = groq_client.chat.completions.create(
+                                model=MODEL, messages=current_messages,
+                                temperature=0.7, max_tokens=1024, stream=True
+                            )
+                            for chunk in plain_stream:
+                                delta = chunk.choices[0].delta.content
+                                if delta:
+                                    yield f"data: {json.dumps({'token': delta})}\n\n"
+                            yield f"data: {json.dumps({'done': True})}\n\n"
+                            return
+                        except Exception:
+                            pass
+                    err = (
+                        "Clé Groq invalide. Génère une nouvelle clé dans Groq et mets GROQ_API_KEY à jour."
+                        if "invalid_api_key" in msg or "Invalid API Key" in msg
+                        else (msg or "Erreur Groq")
+                    )
+                    yield f"data: {json.dumps({'error': err}, ensure_ascii=False)}\n\n"
                     yield f"data: {json.dumps({'done': True})}\n\n"
                     return
-                msg = completion.choices[0].message
-                tool_calls = msg.tool_calls or []
 
-                # Pas de tool call : on stream la réponse finale
+                resp_msg = completion.choices[0].message
+                tool_calls = resp_msg.tool_calls or []
+
                 if not tool_calls:
-                    # Si on a déjà du contenu généré, on peut le streamer artificiellement
-                    # ou refaire un appel en streaming pour la fluidité
                     try:
                         final_stream = groq_client.chat.completions.create(
                             **_groq_completion_kwargs(current_messages, stream=True)
@@ -288,20 +401,27 @@ def chat():
                         return
                     except Exception as e:
                         msg = str(e)
-                        if "invalid_api_key" in msg or "Invalid API Key" in msg:
-                            yield f"data: {json.dumps({'error': 'Clé Groq invalide (invalid_api_key). Génère une nouvelle clé dans Groq, mets GROQ_API_KEY à jour, puis redémarre llm.'}, ensure_ascii=False)}\n\n"
-                        else:
-                            yield f"data: {json.dumps({'error': msg or 'Erreur Groq'}, ensure_ascii=False)}\n\n"
+                        err = (
+                            "Clé Groq invalide. Génère une nouvelle clé dans Groq et mets GROQ_API_KEY à jour."
+                            if "invalid_api_key" in msg or "Invalid API Key" in msg
+                            else (msg or "Erreur Groq")
+                        )
+                        yield f"data: {json.dumps({'error': err}, ensure_ascii=False)}\n\n"
                         yield f"data: {json.dumps({'done': True})}\n\n"
                         return
 
-                # Tool call détecté : on notifie le frontend, on exécute, on reboucle
-                yield f"data: {json.dumps({'type': 'status', 'phase': 'search', 'message': 'Apex consulte les informations du marché…'}, ensure_ascii=False)}\n\n"
+                # Notifier le frontend du type d'outil utilisé
+                for tc in tool_calls:
+                    status_msg = _DB_TOOL_STATUS.get(
+                        tc.function.name,
+                        "Apex consulte les informations du marché…"
+                    )
+                    yield f"data: {json.dumps({'type': 'status', 'phase': 'search', 'message': status_msg}, ensure_ascii=False)}\n\n"
 
-                # Ajouter le message assistant avec les tool_calls au contexte
+                # Ajouter le message assistant avec les tool_calls
                 current_messages.append({
                     "role": "assistant",
-                    "content": msg.content or "",
+                    "content": resp_msg.content or "",
                     "tool_calls": [
                         {
                             "id": tc.id,
@@ -315,21 +435,24 @@ def chat():
                     ],
                 })
 
-                # Exécuter chaque tool call et ajouter les résultats
+                # Exécuter chaque outil
                 for tc in tool_calls:
                     try:
-                        args = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError:
+                        parsed = json.loads(tc.function.arguments or "{}")
+                        args = parsed if isinstance(parsed, dict) else {}
+                    except (json.JSONDecodeError, TypeError):
                         args = {}
-                    result = execute_tool_call(tc.function.name, args)
+                    result_str, sse_side_effect = execute_tool_call(tc.function.name, args, student_id=student_id)
+                    if sse_side_effect:
+                        yield f"data: {json.dumps(sse_side_effect, ensure_ascii=False)}\n\n"
                     current_messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
-                        "content": result,
+                        "content": result_str,
                     })
 
-            # Si on sort de la boucle sans réponse finale
-            yield f"data: {json.dumps({'token': 'Désolé, je n''ai pas pu finaliser la recherche.'})}\n\n"
+            _sorry = json.dumps({"token": "Désolé, je n'ai pas pu finaliser ma réponse."}, ensure_ascii=False)
+            yield f"data: {_sorry}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
 
         return Response(
@@ -346,14 +469,12 @@ def chat():
 def summarize():
     try:
         if not groq_client:
-            return jsonify(
-                {
-                    "error": (
-                        "GROQ_API_KEY manquant. Ajoute GROQ_API_KEY=gsk_... dans bot_cartographe/.env "
-                        "ou llm/.env, puis redémarre Flask. Vérifie : pip install python-dotenv"
-                    )
-                }
-            ), 503
+            return jsonify({
+                "error": (
+                    "GROQ_API_KEY manquant. Ajoute GROQ_API_KEY=gsk_... dans bot_cartographe/.env "
+                    "ou llm/.env, puis redémarre Flask."
+                )
+            }), 503
 
         data = request.get_json()
         messages = data.get("messages", [])
@@ -384,15 +505,14 @@ def summarize():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify(
-        {
-            "status": "ok",
-            "skills": list_skills(),
-            "groq_configured": groq_client is not None,
-            "tavily_configured": tavily_client is not None,
-            "model": MODEL,
-        }
-    )
+    return jsonify({
+        "status": "ok",
+        "skills": list_skills(),
+        "groq_configured": groq_client is not None,
+        "tavily_configured": tavily_client is not None,
+        "supabase_configured": DB_TOOLS_AVAILABLE,
+        "model": MODEL,
+    })
 
 
 if __name__ == "__main__":
@@ -406,11 +526,12 @@ if __name__ == "__main__":
     else:
         print(
             "[env] ERREUR : aucune clé Groq (GROQ_API_KEY / GROQ_KEY / GROQ_TOKEN). "
-            "POST /chat → 503. Fichiers attendus :",
-            _root / ".env",
-            "ou",
-            _here / ".env",
+            "POST /chat → 503.",
         )
     if not tavily_client:
-        print("[env] Tavily absent (TAVILY_API_KEY) — recherche web désactivée, normal si non utilisé.")
+        print("[env] Tavily absent — recherche web désactivée.")
+    if DB_TOOLS_AVAILABLE:
+        print("[env] Supabase OK — outils DB activés.")
+    else:
+        print("[env] Supabase absent — lance : pip install supabase>=2.0")
     app.run(host="0.0.0.0", port=8007, debug=True)

@@ -3,3 +3,4 @@ flask-cors>=4.0
 groq>=0.4
 tavily-python>=0.3
 python-dotenv>=1.0
+supabase>=2.0
