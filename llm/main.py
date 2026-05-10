@@ -534,4 +534,5 @@ if __name__ == "__main__":
         print("[env] Supabase OK — outils DB activés.")
     else:
         print("[env] Supabase absent — lance : pip install supabase>=2.0")
-    app.run(host="0.0.0.0", port=8007, debug=True)
+    port = int(os.environ.get("PORT", 8007))
+    app.run(host="0.0.0.0", port=port, debug=False)
