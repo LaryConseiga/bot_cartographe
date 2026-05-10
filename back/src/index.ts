@@ -695,7 +695,7 @@ app.get("/api/roadmap", async (req, res) => {
   return res.json({ roadmap: data?.roadmap_json ?? null });
 });
 
-const port = Number(process.env.BACKEND_PORT || 8090);
+const port = Number(process.env.PORT || process.env.BACKEND_PORT || 8090);
 app.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`[apexai-back] listening on http://localhost:${port}`);
