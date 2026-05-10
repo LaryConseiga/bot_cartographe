@@ -164,12 +164,12 @@ export const STUDENT_ID_STORAGE_KEY = "apexai_student_id";
 
 function getStoredAccessToken(): string | null {
   if (typeof window === "undefined") return null;
-  return sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+  return localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
 }
 
 export function getStoredStudentId(): string | null {
   if (typeof window === "undefined") return null;
-  return sessionStorage.getItem(STUDENT_ID_STORAGE_KEY);
+  return localStorage.getItem(STUDENT_ID_STORAGE_KEY);
 }
 
 /** Décode le `sub` du JWT access (sans vérifier la signature) pour retrouver l'UUID si la sessionStorage a été vidée. */
@@ -192,7 +192,7 @@ function resolveStudentIdForLlm(): string | null {
   let id = getStoredStudentId();
   if (id) return id;
   id = decodeJwtSub(getStoredAccessToken());
-  if (id) sessionStorage.setItem(STUDENT_ID_STORAGE_KEY, id);
+  if (id) localStorage.setItem(STUDENT_ID_STORAGE_KEY, id);
   return id;
 }
 
@@ -204,14 +204,14 @@ function applyAuthHeaders(headers: Headers) {
 function persistSessionToken(session: { access_token?: string } | null | undefined) {
   if (typeof window === "undefined") return;
   const t = session?.access_token;
-  if (t) sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, t);
-  else sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  if (t) localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, t);
+  else localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
 }
 
 function persistStudentId(userId: string | null | undefined) {
   if (typeof window === "undefined") return;
-  if (userId) sessionStorage.setItem(STUDENT_ID_STORAGE_KEY, userId);
-  else sessionStorage.removeItem(STUDENT_ID_STORAGE_KEY);
+  if (userId) localStorage.setItem(STUDENT_ID_STORAGE_KEY, userId);
+  else localStorage.removeItem(STUDENT_ID_STORAGE_KEY);
 }
 
 /** Utilisé par AppShell : ne rediriger vers /connexion que sur 401 réel, pas sur erreur réseau / 502. */
@@ -230,7 +230,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401) {
-      if (typeof window !== "undefined") sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+      if (typeof window !== "undefined") localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
       throw new Error("Session expirée ou non connecté(e). Reconnectez-vous.");
     }
     const baseMsg = (json && (json.error || json.message)) || `HTTP ${res.status}`;
@@ -274,8 +274,8 @@ export async function login(payload: { email: string; password: string }) {
 
 export async function logout() {
   if (typeof window !== "undefined") {
-    sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
-    sessionStorage.removeItem(STUDENT_ID_STORAGE_KEY);
+    localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    localStorage.removeItem(STUDENT_ID_STORAGE_KEY);
   }
   return request<{ ok: true }>("/auth/logout", { method: "POST" });
 }
@@ -372,7 +372,7 @@ export async function uploadCvPdf(file: File): Promise<{
   };
   if (!res.ok) {
     if (res.status === 401 && typeof window !== "undefined") {
-      sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+      localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
     }
     throw new Error(json.error || `HTTP ${res.status}`);
   }
