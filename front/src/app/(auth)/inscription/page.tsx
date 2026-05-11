@@ -1,15 +1,19 @@
- "use client";
+"use client";
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import CircularProgress from "@mui/material/CircularProgress";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
 import AuthCard from "@/components/auth/AuthCard";
 import AppLink from "@/components/AppLink";
-import { signup } from "@/lib/api";
+import { signup, login } from "@/lib/api";
+
+const DEMO_EMAIL = "kofi.mensah@demo.apexai";
+const DEMO_PASSWORD = "Demo1234!";
 
 export default function InscriptionPage() {
   const router = useRouter();
@@ -86,7 +90,29 @@ export default function InscriptionPage() {
             }
           }}
         >
-          Créer mon compte
+          {loading ? <CircularProgress size={20} sx={{ color: "inherit" }} /> : "Créer mon compte"}
+        </Button>
+
+        {/* Bouton démo — accès direct sans inscription */}
+        <Button
+          fullWidth
+          variant="outlined"
+          sx={{ py: 1.1, textTransform: "none", fontWeight: 600, borderColor: "divider", color: "text.secondary" }}
+          disabled={loading}
+          onClick={async () => {
+            setError(null);
+            setLoading(true);
+            try {
+              await login({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
+              router.push("/chat");
+            } catch (e) {
+              setError(e instanceof Error ? e.message : "Erreur");
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          Accès démo (sans compte)
         </Button>
 
         {error ? (
