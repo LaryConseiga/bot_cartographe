@@ -44,7 +44,9 @@ app.use(
 
       return cb(new Error(`CORS blocked for origin: ${requestOrigin}`), false);
     },
-    credentials: true
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
   })
 );
 
