@@ -33,7 +33,6 @@ import {
   BriefcaseIcon,
   PresentationChartLineIcon,
   ShareIcon,
-  ArrowDownTrayIcon,
   ChatBubbleLeftIcon,
   UserCircleIcon,
 } from "@heroicons/react/24/outline";
@@ -399,11 +398,6 @@ export default function AppShell(props: { children: React.ReactNode }) {
             <Tooltip title="Partager">
               <IconButton type="button" aria-label="Partager" size="small" sx={{ opacity: 0.65 }}>
                 <ShareIcon style={{ width: 18, height: 18 }} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Télécharger">
-              <IconButton type="button" aria-label="Télécharger" size="small" sx={{ opacity: 0.65 }}>
-                <ArrowDownTrayIcon style={{ width: 18, height: 18 }} />
               </IconButton>
             </Tooltip>
             <Tooltip title="Mon compte">

@@ -20,6 +20,7 @@ import {
   MicrophoneIcon,
   ArrowUpIcon,
   SpeakerWaveIcon,
+  StopIcon,
   GlobeAltIcon,
   ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
@@ -157,6 +158,7 @@ export default function ChatThreadPage() {
   const [downloadingCv, setDownloadingCv] = React.useState<"fr" | "en" | null>(null);
   const [downloadingLetter, setDownloadingLetter] = React.useState<"fr" | "en" | null>(null);
   const streamingAcc = React.useRef("");
+  const abortControllerRef = React.useRef<AbortController | null>(null);
   const sendingLock = React.useRef(false);
   const initSentRef = React.useRef(false);
   const messagesSentRef = React.useRef(0);
@@ -188,13 +190,18 @@ export default function ChatThreadPage() {
 
       let assistantSynced = "";
 
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       try {
-        const { streamChatMessage, listMessages, ROADMAP_STORAGE_KEY, updateChatTitle } = await import("@/lib/api");
+        const { streamChatMessage, listMessages, saveAssistantMessage, ROADMAP_STORAGE_KEY, updateChatTitle } =
+          await import("@/lib/api");
         let firstToken = true;
         await streamChatMessage(sessionId, messageForApi, {
           cvText: opts?.cvText,
           offerContext: opts?.offerContext,
           skill: chatSkill,
+          signal: controller.signal,
           onToken: (token) => {
             if (firstToken) {
               firstToken = false;
@@ -269,16 +276,36 @@ export default function ChatThreadPage() {
           mergeLocalReply();
         }
       } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error("[chat] streamChatMessage:", e);
-        const msg = e instanceof Error ? e.message : String(e);
-        setChatError(
-          msg ||
-            "Impossible de joindre le serveur (back + service llm Flask sur le bon port ? session active ?)."
-        );
-        setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
-        setStatusBanner(null);
+        const aborted = e instanceof DOMException && e.name === "AbortError";
+        if (aborted) {
+          const partial = streamingAcc.current.trim();
+          setMessages((prev) => {
+            const without = prev.filter((m) => m.id !== optimistic.id);
+            return [
+              ...without,
+              { id: optimistic.id, role: "user", content: messageForApi },
+              ...(partial ? [{ id: `local-${Date.now()}`, role: "assistant", content: partial }] : [])
+            ];
+          });
+          if (partial) {
+            import("@/lib/api")
+              .then(({ saveAssistantMessage }) => saveAssistantMessage(sessionId, partial))
+              .catch(() => {});
+          }
+          setStatusBanner(null);
+        } else {
+          // eslint-disable-next-line no-console
+          console.error("[chat] streamChatMessage:", e);
+          const msg = e instanceof Error ? e.message : String(e);
+          setChatError(
+            msg ||
+              "Impossible de joindre le serveur (back + service llm Flask sur le bon port ? session active ?)."
+          );
+          setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
+          setStatusBanner(null);
+        }
       } finally {
+        abortControllerRef.current = null;
         sendingLock.current = false;
         setSending(false);
         setStreamingText("");
@@ -346,6 +373,10 @@ export default function ChatThreadPage() {
     setText("");
     setCvAttached(null);
     void sendContent(content, cv ? { cvText: cv.text } : undefined);
+  }
+
+  function handleStop() {
+    abortControllerRef.current?.abort();
   }
 
   async function handleCvFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -754,24 +785,31 @@ export default function ChatThreadPage() {
               <MicrophoneIcon style={{ width: 18, height: 18 }} />
             </IconButton>
             <IconButton
-              type={canSend ? "submit" : "button"}
-              aria-label={canSend ? "Envoyer le message" : "Saisis un message pour envoyer (audio à venir)"}
-              disabled={sending || uploadingCv}
+              type={sending ? "button" : canSend ? "submit" : "button"}
+              aria-label={sending ? "Interrompre la réponse" : canSend ? "Envoyer le message" : "Saisis un message pour envoyer (audio à venir)"}
+              disabled={!sending && uploadingCv}
               onClick={(e) => {
+                if (sending) {
+                  e.preventDefault();
+                  handleStop();
+                  return;
+                }
                 if (!canSend) e.preventDefault();
               }}
               sx={{
                 mr: 0.5,
-                bgcolor: canSend ? "primary.main" : "rgba(255,255,255,0.07)",
-                color: canSend ? "white" : "text.secondary",
-                "&:hover": { bgcolor: canSend ? "#0d8a6b" : "rgba(255,255,255,0.10)" },
+                bgcolor: sending ? "error.main" : canSend ? "primary.main" : "rgba(255,255,255,0.07)",
+                color: sending || canSend ? "white" : "text.secondary",
+                "&:hover": { bgcolor: sending ? "#c0392b" : canSend ? "#0d8a6b" : "rgba(255,255,255,0.10)" },
                 "&.Mui-disabled": { bgcolor: "rgba(255,255,255,0.05)", color: "text.secondary" },
                 width: 36,
                 height: 36,
                 transition: "background-color 0.2s",
               }}
             >
-              {canSend ? (
+              {sending ? (
+                <StopIcon style={{ width: 16, height: 16 }} />
+              ) : canSend ? (
                 <ArrowUpIcon style={{ width: 18, height: 18 }} />
               ) : (
                 <SpeakerWaveIcon style={{ width: 18, height: 18 }} />

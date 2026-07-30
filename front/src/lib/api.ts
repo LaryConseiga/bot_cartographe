@@ -620,6 +620,7 @@ export type StreamChatOptions = {
   cvText?: string;
   skill?: string;
   offerContext?: OfferContext;
+  signal?: AbortSignal;
   onToken?: (token: string) => void;
   onStatus?: (evt: ChatStatusEvent) => void;
   onRoadmap?: (data: unknown) => void;
@@ -637,7 +638,7 @@ export async function streamChatMessage(
   message: string,
   options: StreamChatOptions = {}
 ): Promise<void> {
-  const { cvText, skill = DEFAULT_LLM_SKILL, offerContext, onToken, onStatus, onRoadmap, onCvMatchResult, onDone } =
+  const { cvText, skill = DEFAULT_LLM_SKILL, offerContext, signal, onToken, onStatus, onRoadmap, onCvMatchResult, onDone } =
     options;
 
   await sendMessage(sessionId, message);
@@ -649,7 +650,8 @@ export async function streamChatMessage(
   const res = await fetch(llmEndpoint("chat"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildLlmChatBody(messages, { skill, cvText, offerContext }))
+    body: JSON.stringify(buildLlmChatBody(messages, { skill, cvText, offerContext })),
+    signal
   });
 
   if (!res.ok) {
