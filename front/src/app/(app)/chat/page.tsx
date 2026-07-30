@@ -2,8 +2,11 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import ButtonBase from "@mui/material/ButtonBase";
+import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import TextField from "@mui/material/TextField";
@@ -46,7 +49,47 @@ const SUGGESTIONS = [
 export default function ChatHomePage() {
   const router = useRouter();
   const [text, setText] = React.useState("");
+  const [uploadingCv, setUploadingCv] = React.useState(false);
+  const [cvAttached, setCvAttached] = React.useState<{ fileName: string } | null>(null);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const hasText = text.trim().length > 0;
+
+  async function handleCvFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setUploadingCv(true);
+    setUploadError(null);
+
+    try {
+      const { uploadCvPdf, updateMyProfile } = await import("@/lib/api");
+      const lower = file.name.toLowerCase();
+      const mt = (file.type || "").toLowerCase();
+      const isPdf = mt === "application/pdf" || lower.endsWith(".pdf");
+      const isTxt = mt.startsWith("text/") || lower.endsWith(".txt");
+      const isImage = mt.startsWith("image/") || /\.(jpe?g|png|webp)$/.test(lower);
+
+      if (isPdf || isImage) {
+        await uploadCvPdf(file);
+      } else if (isTxt) {
+        const raw = await file.text();
+        await updateMyProfile({ cv_text: raw.slice(0, 20_000) });
+      } else {
+        setUploadError("Formats acceptés : PDF, image (JPG, PNG, WebP) ou fichier texte (.txt).");
+        return;
+      }
+
+      setCvAttached({ fileName: file.name });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[chat] import CV:", err);
+      setUploadError(err instanceof Error ? err.message : "Import du document impossible.");
+    } finally {
+      setUploadingCv(false);
+    }
+  }
 
   async function handleSend(message?: string) {
     try {
@@ -86,28 +129,64 @@ export default function ChatHomePage() {
       </Box>
 
       {/* Input */}
-      <Paper
-        elevation={0}
-        sx={{
-          width: "100%",
-          maxWidth: 700,
-          p: 0.75,
-          display: "flex",
-          alignItems: "center",
-          gap: 0.5,
-          borderRadius: "18px",
-          border: "1px solid",
-          borderColor: "divider",
-          boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
-          "&:focus-within": {
-            borderColor: "rgba(16,163,127,0.5)",
-            boxShadow: "0 4px 24px rgba(16,163,127,0.10)",
-          },
-          transition: "border-color 0.2s, box-shadow 0.2s",
-        }}
-      >
-        <IconButton aria-label="Ajouter une pièce jointe" size="small" sx={{ ml: 0.5, opacity: 0.55 }}>
-          <PlusIcon style={{ width: 18, height: 18 }} />
+      <Box sx={{ width: "100%", maxWidth: 700 }}>
+        {uploadError ? (
+          <Alert severity="error" onClose={() => setUploadError(null)} sx={{ mb: 1 }}>
+            {uploadError}
+          </Alert>
+        ) : null}
+        {cvAttached ? (
+          <Box sx={{ pb: 0.75 }}>
+            <Chip
+              label={`CV : ${cvAttached.fileName}`}
+              size="small"
+              onDelete={() => setCvAttached(null)}
+              sx={{
+                bgcolor: "rgba(16,163,127,0.15)",
+                color: "primary.main",
+                border: "1px solid rgba(16,163,127,0.3)",
+                fontSize: 12,
+                fontWeight: 600,
+                "& .MuiChip-deleteIcon": { color: "primary.main", opacity: 0.7 },
+              }}
+            />
+          </Box>
+        ) : null}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.txt,.jpg,.jpeg,.png,.webp,application/pdf,text/plain,image/jpeg,image/png,image/webp"
+          style={{ display: "none" }}
+          onChange={handleCvFileSelected}
+        />
+        <Paper
+          elevation={0}
+          sx={{
+            width: "100%",
+            p: 0.75,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            borderRadius: "18px",
+            border: "1px solid",
+            borderColor: cvAttached ? "rgba(16,163,127,0.4)" : "divider",
+            boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
+            "&:focus-within": {
+              borderColor: "rgba(16,163,127,0.5)",
+              boxShadow: "0 4px 24px rgba(16,163,127,0.10)",
+            },
+            transition: "border-color 0.2s, box-shadow 0.2s",
+          }}
+        >
+        <IconButton
+          type="button"
+          aria-label="Importer un CV (PDF, image ou texte)"
+          size="small"
+          sx={{ ml: 0.5, opacity: cvAttached ? 1 : 0.55, color: cvAttached ? "primary.main" : "inherit" }}
+          disabled={uploadingCv}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {uploadingCv ? <CircularProgress size={16} /> : <PlusIcon style={{ width: 18, height: 18 }} />}
         </IconButton>
         <TextField
           placeholder="Posez votre question à ApexAI…"
@@ -149,7 +228,8 @@ export default function ChatHomePage() {
             <SpeakerWaveIcon style={{ width: 18, height: 18 }} />
           )}
         </IconButton>
-      </Paper>
+        </Paper>
+      </Box>
 
       {/* Suggestions */}
       <Box

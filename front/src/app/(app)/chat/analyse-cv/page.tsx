@@ -220,7 +220,21 @@ export default function AnalyseCvPage() {
             ))}
           </Box>
 
-          <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 3 }}>
+          <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1, mt: 3, flexWrap: "wrap" }}>
+            <Button
+              variant="text"
+              endIcon={<ArrowRightIcon style={{ width: 16, height: 16 }} />}
+              onClick={() => router.push("/chat")}
+              sx={{
+                textTransform: "none",
+                fontWeight: 800,
+                fontSize: 14,
+                color: TEAL,
+                "&:hover": { bgcolor: `${TEAL}12` },
+              }}
+            >
+              Discuter avec Apex d&apos;une offre d&apos;emploi
+            </Button>
             <Button
               variant="text"
               endIcon={<ArrowRightIcon style={{ width: 16, height: 16 }} />}

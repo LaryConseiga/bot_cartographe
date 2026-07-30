@@ -1,0 +1,32 @@
+\documentclass[11pt,a4paper,sans]{moderncv}
+\moderncvstyle{classic}
+\moderncvcolor{blue}
+\usepackage[scale=0.85]{geometry}
+
+\name{\VAR{personal_info.first_name}}{\VAR{personal_info.last_name}}
+\BLOCK{ if personal_info.location }
+\address{\VAR{personal_info.location}}{}
+\BLOCK{ endif }
+\BLOCK{ if personal_info.phone }
+\phone[mobile]{\VAR{personal_info.phone}}
+\BLOCK{ endif }
+\BLOCK{ if personal_info.email }
+\email{\VAR{personal_info.email}}
+\BLOCK{ endif }
+
+\begin{document}
+
+\recipient{\VAR{company}}{\VAR{location}}
+\date{\VAR{date_label}}
+\opening{\VAR{labels.opening}}
+\closing{\VAR{labels.closing}}
+\enclosure[\VAR{labels.enclosure_label}]{\VAR{labels.enclosure_content}}
+\makelettertitle
+
+\BLOCK{ for p in paragraphs }
+\VAR{p}
+
+\BLOCK{ endfor }
+\makeletterclosing
+
+\end{document}

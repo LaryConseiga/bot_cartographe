@@ -1,0 +1,79 @@
+\documentclass[11pt,a4paper,sans]{moderncv}
+\moderncvstyle{classic}
+\moderncvcolor{blue}
+\usepackage[scale=0.85]{geometry}
+\setlength{\hintscolumnwidth}{4.3cm}
+
+\name{\VAR{cv.personal_info.first_name}}{\VAR{cv.personal_info.last_name}}
+\BLOCK{ if cv.target_title }
+\title{\VAR{cv.target_title}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.phone }
+\phone[mobile]{\VAR{cv.personal_info.phone}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.email }
+\email{\VAR{cv.personal_info.email}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.location }
+\address{\VAR{cv.personal_info.location}}{}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.linkedin }
+\social[linkedin]{\VAR{cv.personal_info.linkedin}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.portfolio }
+\homepage{\VAR{cv.personal_info.portfolio}}
+\BLOCK{ endif }
+
+\begin{document}
+\makecvtitle
+
+\BLOCK{ if cv.summary }
+\section{\VAR{labels.summary}}
+\cvitem{}{\VAR{cv.summary}}
+\BLOCK{ endif }
+
+\BLOCK{ if cv.experience }
+\section{\VAR{labels.experience}}
+\BLOCK{ for job in cv.experience }
+\cventry{\VAR{job.start_date} -- \VAR{job.end_date}}{\VAR{job.title}}{\VAR{job.company}}{\VAR{job.location}}{}{%
+\BLOCK{ if job.bullets }\begin{itemize}
+\BLOCK{ for b in job.bullets }
+\item \VAR{b}
+\BLOCK{ endfor }
+\end{itemize}\BLOCK{ endif }}
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if cv.education }
+\section{\VAR{labels.education}}
+\BLOCK{ for edu in cv.education }
+\cventry{\VAR{edu.start_date} -- \VAR{edu.end_date}}{\VAR{edu.degree}}{\VAR{edu.school}}{\VAR{edu.location}}{}{\BLOCK{ if edu.details }\VAR{edu.details}\BLOCK{ endif }}
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if cv.skills.hard or cv.skills.soft or cv.skills.tools }
+\section{\VAR{labels.skills}}
+\BLOCK{ if cv.skills.hard }
+\cvitem{\VAR{labels.hard}}{\VAR{cv.skills.hard|join(', ')}}
+\BLOCK{ endif }
+\BLOCK{ if cv.skills.tools }
+\cvitem{\VAR{labels.tools}}{\VAR{cv.skills.tools|join(', ')}}
+\BLOCK{ endif }
+\BLOCK{ if cv.skills.soft }
+\cvitem{\VAR{labels.soft}}{\VAR{cv.skills.soft|join(', ')}}
+\BLOCK{ endif }
+\BLOCK{ endif }
+
+\BLOCK{ if cv.certifications }
+\section{\VAR{labels.certifications}}
+\cvitem{}{\VAR{cv.certifications|join(', ')}}
+\BLOCK{ endif }
+
+\BLOCK{ if cv.languages }
+\section{\VAR{labels.languages}}
+\BLOCK{ for lang in cv.languages }
+\cvitem{\VAR{lang.name}}{\VAR{lang.level}}
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\end{document}

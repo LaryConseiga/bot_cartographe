@@ -10,7 +10,10 @@ import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import CircularProgress from "@mui/material/CircularProgress";
 import Image from "next/image";
+import type { CvMatchSseResult, OfferContext } from "@/lib/api";
+import { scoreColor, downloadBlob } from "@/lib/cvMatchDisplay";
 
 import {
   PlusIcon,
@@ -18,6 +21,7 @@ import {
   ArrowUpIcon,
   SpeakerWaveIcon,
   GlobeAltIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
 
 const LOGO_SRC = "/ChatGPT Image May 7, 2026, 01_41_46 PM.png";
@@ -149,6 +153,9 @@ export default function ChatThreadPage() {
   const [uploadingCv, setUploadingCv] = React.useState(false);
   const [cvAttached, setCvAttached] = React.useState<{ text: string; fileName: string } | null>(null);
   const [roadmapReady, setRoadmapReady] = React.useState(false);
+  const [cvMatchResult, setCvMatchResult] = React.useState<CvMatchSseResult | null>(null);
+  const [downloadingCv, setDownloadingCv] = React.useState<"fr" | "en" | null>(null);
+  const [downloadingLetter, setDownloadingLetter] = React.useState<"fr" | "en" | null>(null);
   const streamingAcc = React.useRef("");
   const sendingLock = React.useRef(false);
   const initSentRef = React.useRef(false);
@@ -164,7 +171,7 @@ export default function ChatThreadPage() {
   );
 
   const sendContent = React.useCallback(
-    async (content: string, opts?: { cvText?: string }) => {
+    async (content: string, opts?: { cvText?: string; offerContext?: OfferContext }) => {
       const messageForApi = content.trim() || (opts?.cvText ? "J'ai importé mon CV." : "");
       if (!messageForApi || sendingLock.current) return;
       const isFirstMessage = messagesSentRef.current === 0;
@@ -186,6 +193,7 @@ export default function ChatThreadPage() {
         let firstToken = true;
         await streamChatMessage(sessionId, messageForApi, {
           cvText: opts?.cvText,
+          offerContext: opts?.offerContext,
           skill: chatSkill,
           onToken: (token) => {
             if (firstToken) {
@@ -210,6 +218,9 @@ export default function ChatThreadPage() {
               }
               setRoadmapReady(true);
             } catch { /* ignore */ }
+          },
+          onCvMatchResult: (data) => {
+            setCvMatchResult(data);
           },
         });
         assistantSynced = streamingAcc.current;
@@ -304,7 +315,18 @@ export default function ChatThreadPage() {
     if (!pending?.trim()) return;
     initSentRef.current = true;
     sessionStorage.removeItem(key);
-    void sendContent(pending.trim());
+
+    const offerKey = `apex_init_offer_${sessionId}`;
+    const pendingOfferRaw = typeof window !== "undefined" ? sessionStorage.getItem(offerKey) : null;
+    let offerContext: OfferContext | undefined;
+    if (pendingOfferRaw) {
+      sessionStorage.removeItem(offerKey);
+      try {
+        offerContext = JSON.parse(pendingOfferRaw) as OfferContext;
+      } catch { /* ignore */ }
+    }
+
+    void sendContent(pending.trim(), offerContext ? { offerContext } : undefined);
   }, [sessionId, sendContent]);
 
   React.useEffect(() => {
@@ -363,6 +385,49 @@ export default function ChatThreadPage() {
       setChatError(err instanceof Error ? err.message : "Import du document impossible.");
     } finally {
       setUploadingCv(false);
+    }
+  }
+
+  async function handleDownloadCv(lang: "fr" | "en") {
+    if (!cvMatchResult) return;
+    setDownloadingCv(lang);
+    setChatError(null);
+    try {
+      const { generateCvPdf } = await import("@/lib/api");
+      const cv = lang === "fr" ? cvMatchResult.cv_fr : cvMatchResult.cv_en;
+      const blob = await generateCvPdf(cv, lang);
+      const name = cv.personal_info?.full_name?.replace(/\s+/g, "_") || "cv";
+      downloadBlob(blob, `CV_${name}_${lang}.pdf`);
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : "Erreur lors de la génération du PDF.");
+    } finally {
+      setDownloadingCv(null);
+    }
+  }
+
+  async function handleDownloadLetter(lang: "fr" | "en") {
+    if (!cvMatchResult) return;
+    setDownloadingLetter(lang);
+    setChatError(null);
+    try {
+      const { generateLetterPdf } = await import("@/lib/api");
+      const cv = lang === "fr" ? cvMatchResult.cv_fr : cvMatchResult.cv_en;
+      const paragraphs = lang === "fr" ? cvMatchResult.cover_letter_fr : cvMatchResult.cover_letter_en;
+      const blob = await generateLetterPdf(
+        {
+          personal_info: cv.personal_info,
+          company: cvMatchResult.offer.company,
+          location: cvMatchResult.offer.location,
+          paragraphs
+        },
+        lang
+      );
+      const name = cv.personal_info?.full_name?.replace(/\s+/g, "_") || "lettre";
+      downloadBlob(blob, `Lettre_${name}_${lang}.pdf`);
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : "Erreur lors de la génération de la lettre.");
+    } finally {
+      setDownloadingLetter(null);
     }
   }
 
@@ -495,6 +560,98 @@ export default function ChatThreadPage() {
           >
             Voir la Progression
           </Button>
+        </Paper>
+      ) : null}
+
+      {/* Résultat de comparaison CV / offre */}
+      {cvMatchResult ? (
+        <Paper
+          elevation={0}
+          sx={{
+            maxWidth: 860,
+            width: "100%",
+            mx: "auto",
+            mb: 1.5,
+            p: 2,
+            border: "1px solid rgba(16,163,127,0.4)",
+            bgcolor: "rgba(16,163,127,0.06)",
+            borderRadius: 2,
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1 }}>
+            <Typography variant="h6" sx={{ fontWeight: 900, color: scoreColor(cvMatchResult.score) }}>
+              {cvMatchResult.score}%
+            </Typography>
+            <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13.5 }}>
+              {cvMatchResult.offer.title} — {cvMatchResult.offer.company}
+            </Typography>
+          </Box>
+
+          {cvMatchResult.strengths.length ? (
+            <Box sx={{ mb: 1 }}>
+              {cvMatchResult.strengths.map((s, i) => (
+                <Typography key={i} variant="body2" sx={{ fontSize: 13, color: "text.secondary" }}>
+                  + {s}
+                </Typography>
+              ))}
+            </Box>
+          ) : null}
+          {cvMatchResult.gaps.length ? (
+            <Box sx={{ mb: 1.5 }}>
+              {cvMatchResult.gaps.map((g, i) => (
+                <Typography key={i} variant="body2" sx={{ fontSize: 13, color: "text.secondary" }}>
+                  − {g}
+                </Typography>
+              ))}
+            </Box>
+          ) : null}
+
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={downloadingCv !== null}
+              startIcon={downloadingCv === "fr" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ArrowDownTrayIcon style={{ width: 14, height: 14 }} />}
+              onClick={() => handleDownloadCv("fr")}
+              sx={{ textTransform: "none", fontWeight: 700, bgcolor: "#10A37F", "&:hover": { bgcolor: "#0d8f6a" }, boxShadow: "none" }}
+            >
+              Télécharger CV (FR)
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={downloadingCv !== null}
+              startIcon={downloadingCv === "en" ? <CircularProgress size={14} /> : <ArrowDownTrayIcon style={{ width: 14, height: 14 }} />}
+              onClick={() => handleDownloadCv("en")}
+              sx={{ textTransform: "none", fontWeight: 700 }}
+            >
+              Download CV (EN)
+            </Button>
+            {cvMatchResult.cover_letter_fr?.length ? (
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={downloadingLetter !== null}
+                startIcon={downloadingLetter === "fr" ? <CircularProgress size={14} /> : <ArrowDownTrayIcon style={{ width: 14, height: 14 }} />}
+                onClick={() => handleDownloadLetter("fr")}
+                sx={{ textTransform: "none", fontWeight: 700 }}
+              >
+                Lettre de motivation (FR)
+              </Button>
+            ) : null}
+            {cvMatchResult.cover_letter_en?.length ? (
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={downloadingLetter !== null}
+                startIcon={downloadingLetter === "en" ? <CircularProgress size={14} /> : <ArrowDownTrayIcon style={{ width: 14, height: 14 }} />}
+                onClick={() => handleDownloadLetter("en")}
+                sx={{ textTransform: "none", fontWeight: 700 }}
+              >
+                Cover Letter (EN)
+              </Button>
+            ) : null}
+          </Box>
         </Paper>
       ) : null}
 

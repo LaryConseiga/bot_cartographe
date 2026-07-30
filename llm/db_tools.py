@@ -548,6 +548,151 @@ DB_TOOLS.append({
     },
 })
 
+def list_job_offers(contract_type: str = None, keyword: str = None, limit: int = 10) -> str:
+    """Consulte le catalogue des offres d'emploi publiées par les utilisateurs."""
+    from supabase_client import get_supabase
+    try:
+        sb = get_supabase()
+        query = sb.table("job_offers").select(
+            "id,title,company,contract_type,location,country,description,created_at"
+        )
+        if contract_type:
+            query = query.eq("contract_type", contract_type)
+        if keyword:
+            query = query.or_(f"title.ilike.%{keyword}%,company.ilike.%{keyword}%,description.ilike.%{keyword}%")
+        res = query.order("created_at", desc=True).limit(min(int(limit), 20)).execute()
+        return json.dumps({"offers": res.data or []}, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+DB_TOOLS.append({
+    "type": "function",
+    "function": {
+        "name": "list_job_offers",
+        "description": (
+            "Consulte les offres d'emploi/stage/alternance reellement publiees par les utilisateurs de la plateforme. "
+            "A utiliser quand l'etudiant exprime l'envie de trouver un stage, une alternance ou un emploi."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "contract_type": {
+                    "type": "string",
+                    "enum": ["stage", "alternance", "emploi", "CDI", "CDD"],
+                    "description": "Filtrer par type de contrat. Laisser vide pour tout.",
+                },
+                "keyword": {"type": "string", "description": "Mot-cle (titre, entreprise, description)."},
+                "limit": {"type": "integer", "description": "Nombre max de resultats (defaut 10, max 20)", "default": 10},
+            },
+            "required": [],
+        },
+    },
+})
+
+
+def match_cv_to_offer(offer_id: str, student_id: str, extra_info: str = None) -> tuple[str, dict | None]:
+    """Compare le CV de l'etudiant a une offre precise ; retourne un resume compact + le CV complet en side-effect SSE."""
+    from supabase_client import get_supabase
+    from cv_match_core import run_cv_match
+
+    try:
+        sb = get_supabase()
+
+        offer_res = sb.table("job_offers").select("*").eq("id", offer_id).limit(1).execute()
+        offer_rows = offer_res.data or []
+        if not offer_rows:
+            return json.dumps({"error": "Offre introuvable."}, ensure_ascii=False), None
+        offer = offer_rows[0]
+
+        profile_res = sb.table("student_profiles").select("cv_text").eq("id", student_id).limit(1).execute()
+        profile_rows = profile_res.data or []
+        cv_text = (profile_rows[0].get("cv_text") if profile_rows else None) or ""
+        if not cv_text.strip():
+            return json.dumps({"error": "Aucun CV enregistre pour cet etudiant."}, ensure_ascii=False), None
+
+        if extra_info and extra_info.strip():
+            cv_text = cv_text + "\n\nInformations complementaires fournies par l'etudiant (a utiliser telles quelles, ne pas inventer au-dela) :\n" + extra_info.strip()
+
+        job_offer_text = (
+            f"Titre : {offer.get('title', '')}\n"
+            f"Entreprise : {offer.get('company', '')}\n"
+            f"Type de contrat : {offer.get('contract_type', '')}\n"
+            f"Lieu : {offer.get('location') or ''} {offer.get('country') or ''}\n"
+            f"Description :\n{offer.get('description', '')}"
+        )
+
+        from main import groq_client, MODEL, load_skill
+        parsed = run_cv_match(groq_client, MODEL, load_skill, cv_text, job_offer_text)
+
+        cv_fr_contact = (parsed.get("cv_fr") or {}).get("personal_info") or {}
+        missing_contact_fields = [
+            f for f in ("email", "phone") if not cv_fr_contact.get(f)
+        ]
+
+        compact = {
+            "score": parsed.get("score"),
+            "strengths": parsed.get("strengths", []),
+            "gaps": parsed.get("gaps", []),
+            "explanation": parsed.get("explanation", ""),
+            "missing_contact_fields": missing_contact_fields,
+        }
+        side_effect = {
+            "type": "cv_match_result",
+            "data": {
+                "offer": {
+                    "id": offer["id"],
+                    "title": offer.get("title"),
+                    "company": offer.get("company"),
+                    "location": " ".join(filter(None, [offer.get("location"), offer.get("country")])),
+                },
+                "score": parsed.get("score"),
+                "strengths": parsed.get("strengths", []),
+                "gaps": parsed.get("gaps", []),
+                "reorg_suggestions": parsed.get("reorg_suggestions", []),
+                "explanation": parsed.get("explanation", ""),
+                "cv_fr": parsed.get("cv_fr"),
+                "cv_en": parsed.get("cv_en"),
+                "cover_letter_fr": parsed.get("cover_letter_fr", []),
+                "cover_letter_en": parsed.get("cover_letter_en", []),
+            },
+        }
+        return json.dumps(compact, ensure_ascii=False), side_effect
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False), None
+
+
+DB_TOOLS.append({
+    "type": "function",
+    "function": {
+        "name": "match_cv_to_offer",
+        "description": (
+            "Compare le CV de l'etudiant a une offre d'emploi precise du catalogue et calcule un score d'adequation, "
+            "les points forts, les lacunes, et prepare un CV et une lettre de motivation adaptes et telechargeables. "
+            "A utiliser quand l'etudiant veut savoir s'il correspond a une offre precise, ou quand un identifiant "
+            "d'offre a ete fourni dans le contexte de la conversation. Le resultat indique missing_contact_fields "
+            "(email/telephone absents du CV) — si non vide, redemande ces infos a l'etudiant puis rappelle cet "
+            "outil avec extra_info rempli pour regenerer des documents complets."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "offer_id": {"type": "string", "description": "UUID de l'offre d'emploi a comparer (job_offers.id)."},
+                "extra_info": {
+                    "type": "string",
+                    "description": (
+                        "Informations complementaires fournies par l'etudiant en conversation et absentes de son "
+                        "CV (telephone, email, disponibilite, motivation particuliere) — a inclure telles quelles "
+                        "dans le CV/la lettre generes, sans rien inventer au-dela."
+                    ),
+                },
+            },
+            "required": ["offer_id"],
+        },
+    },
+})
+
+
 # Map name → function for dispatch
 DB_TOOL_FUNCTIONS = {
     "get_student_context": get_student_context,
@@ -555,4 +700,6 @@ DB_TOOL_FUNCTIONS = {
     "get_skills_market": get_skills_market,
     "save_gap_analysis": save_gap_analysis,
     "generate_roadmap": generate_roadmap,
+    "list_job_offers": list_job_offers,
+    "match_cv_to_offer": match_cv_to_offer,
 }

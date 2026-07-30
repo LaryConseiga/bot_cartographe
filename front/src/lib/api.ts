@@ -34,14 +34,17 @@ export type ChatStatusEvent = {
  * Corps de requête comme dans `llm/index.html` : `{ messages, stream: true }`,
  * avec `skill` / `cvText` / `student_id` seulement si disponibles.
  */
+export type OfferContext = { offerId: string; title: string; company: string; description: string };
+
 export function buildLlmChatBody(
   messages: LlmChatMessage[],
-  options: { skill?: string; cvText?: string } = {}
+  options: { skill?: string; cvText?: string; offerContext?: OfferContext } = {}
 ): Record<string, unknown> {
   const body: Record<string, unknown> = { messages, stream: true };
   const sk = options.skill ?? DEFAULT_LLM_SKILL;
   if (sk !== DEFAULT_LLM_SKILL) body.skill = sk;
   if (options.cvText?.trim()) body.cvText = options.cvText.trim();
+  if (options.offerContext) body.offer_context = options.offerContext;
   const studentId = resolveStudentIdForLlm();
   if (studentId) body.student_id = studentId;
   return body;
@@ -52,12 +55,26 @@ export const ROADMAP_STORAGE_KEY = "apex_ai_roadmap_v1";
 /**
  * Consomme le flux SSE du Flask (même logique que la boucle dans `index.html`).
  */
+export type CvMatchSseResult = {
+  offer: { id: string; title: string; company: string; location: string };
+  score: number;
+  strengths: string[];
+  gaps: string[];
+  reorg_suggestions: string[];
+  explanation: string;
+  cv_fr: CvContent;
+  cv_en: CvContent;
+  cover_letter_fr: string[];
+  cover_letter_en: string[];
+};
+
 export async function consumeLlmChatSse(
   res: Response,
   handlers: {
     onToken?: (token: string) => void;
     onStatus?: (evt: ChatStatusEvent) => void;
     onRoadmap?: (data: unknown) => void;
+    onCvMatchResult?: (data: CvMatchSseResult) => void;
     onDone?: () => void;
   }
 ): Promise<string> {
@@ -86,6 +103,10 @@ export async function consumeLlmChatSse(
     }
     if (rec.type === "roadmap" && rec.data) {
       handlers.onRoadmap?.(rec.data);
+      return false;
+    }
+    if (rec.type === "cv_match_result" && rec.data) {
+      handlers.onCvMatchResult?.(rec.data as CvMatchSseResult);
       return false;
     }
     if (typeof rec.token === "string") {
@@ -343,6 +364,40 @@ export async function updateMyProfile(patch: Partial<StudentProfile>) {
   });
 }
 
+export type JobOffer = {
+  id: string;
+  posted_by: string;
+  title: string;
+  company: string;
+  contract_type: "stage" | "alternance" | "emploi" | "CDI" | "CDD";
+  location: string | null;
+  country: string | null;
+  description: string;
+  created_at: string;
+};
+
+export async function listJobOffers() {
+  return request<{ offers: JobOffer[] }>("/api/job-offers");
+}
+
+export async function createJobOffer(payload: {
+  title: string;
+  company: string;
+  contract_type: JobOffer["contract_type"];
+  location?: string | null;
+  country?: string | null;
+  description: string;
+}) {
+  return request<{ offer: JobOffer }>("/api/job-offers", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function deleteJobOffer(id: string) {
+  return request<{ ok: true }>(`/api/job-offers/${id}`, { method: "DELETE" });
+}
+
 export async function listMessages(sessionId: string) {
   return request<{ messages: ChatMessage[] }>(`/api/chats/${sessionId}/messages`);
 }
@@ -382,6 +437,37 @@ export async function uploadCvPdf(file: File): Promise<{
     charCount: Number(json.charCount ?? json.cvText.length),
     status: String(json.status ?? "ready")
   };
+}
+
+/** PDF/image générique — extraction de texte côté back, sans écriture Supabase (ex. offre d'emploi importée). */
+export async function extractTextFromFile(file: File): Promise<{
+  text: string;
+  charCount: number;
+}> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const headers = new Headers();
+  applyAuthHeaders(headers);
+
+  const res = await fetch(`${API_BASE}/api/extract-text`, {
+    method: "POST",
+    headers,
+    body: fd,
+    credentials: "include"
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    text?: string;
+    charCount?: number;
+  };
+  if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+    }
+    throw new Error(json.error || `HTTP ${res.status}`);
+  }
+  if (!json.text) throw new Error("Réponse d'extraction invalide");
+  return { text: json.text, charCount: Number(json.charCount ?? json.text.length) };
 }
 
 export async function sendMessage(sessionId: string, content: string) {
@@ -433,12 +519,107 @@ export async function analyzeCvWithLlm(
   await consumeLlmChatSse(res, { onToken });
 }
 
+export type CvContent = {
+  personal_info: {
+    full_name: string;
+    email: string | null;
+    phone: string | null;
+    location: string | null;
+    linkedin: string | null;
+    portfolio: string | null;
+  };
+  target_title: string;
+  summary: string;
+  experience: {
+    title: string;
+    company: string;
+    location: string;
+    start_date: string;
+    end_date: string;
+    bullets: string[];
+  }[];
+  education: {
+    degree: string;
+    school: string;
+    location: string;
+    start_date: string;
+    end_date: string;
+    details: string | null;
+  }[];
+  skills: { hard: string[]; soft: string[]; tools: string[] };
+  certifications: string[];
+  languages: { name: string; level: string }[];
+};
+
+export type CvMatchResult = {
+  score: number;
+  strengths: string[];
+  gaps: string[];
+  reorg_suggestions: string[];
+  explanation: string;
+  cv_fr: CvContent;
+  cv_en: CvContent;
+};
+
+/** Compare le CV de l'étudiant à une offre d'emploi collée manuellement. */
+export async function matchCvToOffer(
+  cvText: string,
+  jobOfferText: string
+): Promise<CvMatchResult> {
+  const res = await fetch(llmEndpoint("cv-match"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cvText, jobOfferText })
+  });
+  const json = (await res.json().catch(() => ({}))) as { match?: CvMatchResult; error?: string };
+  if (!res.ok || !json.match) throw new Error(json.error || `HTTP ${res.status}`);
+  return json.match;
+}
+
+/** Génère un CV PDF (LaTeX compilé) à partir du contenu structuré retourné par matchCvToOffer. */
+export async function generateCvPdf(cv: CvContent, lang: "fr" | "en"): Promise<Blob> {
+  const res = await fetch(llmEndpoint("generate-cv-pdf"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cv, lang })
+  });
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error || `HTTP ${res.status}`);
+  }
+  return res.blob();
+}
+
+/** Génère une lettre de motivation PDF (LaTeX compilé) personnalisée pour une offre. */
+export async function generateLetterPdf(
+  payload: {
+    personal_info: CvContent["personal_info"];
+    company: string;
+    location: string;
+    paragraphs: string[];
+  },
+  lang: "fr" | "en"
+): Promise<Blob> {
+  const res = await fetch(llmEndpoint("generate-letter-pdf"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, lang })
+  });
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error || `HTTP ${res.status}`);
+  }
+  return res.blob();
+}
+
 export type StreamChatOptions = {
   cvText?: string;
   skill?: string;
+  offerContext?: OfferContext;
   onToken?: (token: string) => void;
   onStatus?: (evt: ChatStatusEvent) => void;
   onRoadmap?: (data: unknown) => void;
+  onCvMatchResult?: (data: CvMatchSseResult) => void;
   onDone?: () => void;
 };
 
@@ -452,7 +633,8 @@ export async function streamChatMessage(
   message: string,
   options: StreamChatOptions = {}
 ): Promise<void> {
-  const { cvText, skill = DEFAULT_LLM_SKILL, onToken, onStatus, onRoadmap, onDone } = options;
+  const { cvText, skill = DEFAULT_LLM_SKILL, offerContext, onToken, onStatus, onRoadmap, onCvMatchResult, onDone } =
+    options;
 
   await sendMessage(sessionId, message);
   const history = await listMessages(sessionId);
@@ -463,7 +645,7 @@ export async function streamChatMessage(
   const res = await fetch(llmEndpoint("chat"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildLlmChatBody(messages, { skill, cvText }))
+    body: JSON.stringify(buildLlmChatBody(messages, { skill, cvText, offerContext }))
   });
 
   if (!res.ok) {
@@ -476,7 +658,7 @@ export async function streamChatMessage(
     throw new Error(txt || `HTTP ${res.status}`);
   }
 
-  const assistantText = await consumeLlmChatSse(res, { onToken, onStatus, onRoadmap, onDone });
+  const assistantText = await consumeLlmChatSse(res, { onToken, onStatus, onRoadmap, onCvMatchResult, onDone });
   const toSave = assistantText.trim();
   if (toSave) {
     await saveAssistantMessage(sessionId, toSave);

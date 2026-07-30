@@ -64,6 +64,9 @@ from flask_cors import CORS
 from groq import Groq
 from tavily import TavilyClient
 
+from cv_pdf.render import render_tex, render_letter_tex, compile_pdf, CvPdfCompileError
+from cv_match_core import run_cv_match
+
 # ── Supabase DB tools (optionnel — désactivé si supabase n'est pas installé) ──
 try:
     from db_tools import DB_TOOLS, DB_TOOL_FUNCTIONS
@@ -292,6 +295,8 @@ _DB_TOOL_STATUS = {
     "get_skills_market": "Apex consulte les tendances du marché…",
     "save_gap_analysis": "Apex sauvegarde ton analyse…",
     "generate_roadmap": "Apex génère ta roadmap personnalisée…",
+    "list_job_offers": "Apex consulte les offres publiées…",
+    "match_cv_to_offer": "Apex compare ton profil à l'offre…",
 }
 
 
@@ -343,6 +348,18 @@ def chat():
         student_context_block = _build_student_context_block(student_id)
         if student_context_block:
             system_prompt = system_prompt + student_context_block
+
+        # Injecter l'offre sélectionnée (bouton "Postuler") pour un grounding déterministe
+        offer_context = data.get("offer_context")
+        if isinstance(offer_context, dict) and offer_context.get("offerId"):
+            system_prompt = system_prompt + (
+                "\n\n---\nContexte offre sélectionnée par l'étudiant :\n"
+                f"ID : {offer_context.get('offerId')}\n"
+                f"Titre : {offer_context.get('title', '')}\n"
+                f"Entreprise : {offer_context.get('company', '')}\n"
+                f"Description : {str(offer_context.get('description', ''))[:3000]}\n"
+                "---\n"
+            )
 
         full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
 
@@ -503,6 +520,113 @@ def summarize():
         return jsonify({"error": str(e)}), 500
 
 
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", (text or "").strip()).strip("_")
+    return slug or "cv"
+
+
+@app.route("/cv-match", methods=["POST"])
+def cv_match():
+    try:
+        if not groq_client:
+            return jsonify({
+                "error": (
+                    "GROQ_API_KEY manquant. Ajoute GROQ_API_KEY=gsk_... dans bot_cartographe/.env "
+                    "ou llm/.env, puis redémarre Flask."
+                )
+            }), 503
+
+        data = request.get_json() or {}
+        cv_text = (data.get("cvText") or "").strip()
+        job_offer_text = (data.get("jobOfferText") or "").strip()
+
+        if not cv_text:
+            return jsonify({"error": "Le champ 'cvText' est requis"}), 400
+        if not job_offer_text:
+            return jsonify({"error": "Le champ 'jobOfferText' est requis"}), 400
+
+        try:
+            parsed = run_cv_match(groq_client, MODEL, load_skill, cv_text, job_offer_text)
+        except json.JSONDecodeError:
+            return jsonify({
+                "error": "Réponse du modèle invalide, réessaie."
+            }), 502
+
+        return jsonify({"match": parsed})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/generate-cv-pdf", methods=["POST"])
+def generate_cv_pdf():
+    try:
+        data = request.get_json() or {}
+        cv = data.get("cv")
+        lang = data.get("lang")
+
+        if lang not in ("fr", "en"):
+            return jsonify({"error": "Le champ 'lang' doit être 'fr' ou 'en'"}), 400
+        if not isinstance(cv, dict):
+            return jsonify({"error": "Le champ 'cv' est requis"}), 400
+
+        try:
+            tex_source = render_tex(cv, lang)
+            pdf_bytes = compile_pdf(tex_source)
+        except CvPdfCompileError as e:
+            print(f"[cv-pdf] échec de compilation: {e}\n{e.stderr_tail}")
+            return jsonify({"error": str(e)}), 500
+
+        full_name = ((cv.get("personal_info") or {}).get("full_name")) or "cv"
+        filename = f"CV_{_slugify(full_name)}_{lang}.pdf"
+
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/generate-letter-pdf", methods=["POST"])
+def generate_letter_pdf():
+    try:
+        data = request.get_json() or {}
+        personal_info = data.get("personal_info")
+        company = data.get("company")
+        location = data.get("location")
+        paragraphs = data.get("paragraphs")
+        lang = data.get("lang")
+
+        if lang not in ("fr", "en"):
+            return jsonify({"error": "Le champ 'lang' doit être 'fr' ou 'en'"}), 400
+        if not isinstance(personal_info, dict):
+            return jsonify({"error": "Le champ 'personal_info' est requis"}), 400
+        if not isinstance(paragraphs, list) or not paragraphs:
+            return jsonify({"error": "Le champ 'paragraphs' est requis"}), 400
+
+        try:
+            tex_source = render_letter_tex(personal_info, company, location, paragraphs, lang)
+            pdf_bytes = compile_pdf(tex_source)
+        except CvPdfCompileError as e:
+            print(f"[letter-pdf] échec de compilation: {e}\n{e.stderr_tail}")
+            return jsonify({"error": str(e)}), 500
+
+        full_name = personal_info.get("full_name") or "lettre"
+        filename = f"Lettre_{_slugify(full_name)}_{lang}.pdf"
+
+        return Response(
+            pdf_bytes,
+            mimetype="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({
@@ -535,4 +659,4 @@ if __name__ == "__main__":
     else:
         print("[env] Supabase absent — lance : pip install supabase>=2.0")
     port = int(os.environ.get("PORT", 8007))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

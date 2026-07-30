@@ -50,3 +50,12 @@ export const zDevCreateUser = z.object({
   full_name: z.string().min(1).max(120).optional()
 });
 
+export const zCreateJobOffer = z.object({
+  title: z.string().min(1).max(200),
+  company: z.string().min(1).max(200),
+  contract_type: z.enum(["stage", "alternance", "emploi", "CDI", "CDD"]),
+  location: z.string().max(160).nullable().optional(),
+  country: z.string().max(8).nullable().optional(),
+  description: z.string().min(1).max(6000)
+});
+

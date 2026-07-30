@@ -13,7 +13,15 @@ const __dirname = path.dirname(__filename);
 const TESSDATA_PATH = path.join(__dirname, "..", "tessdata");
 
 import { supabase } from "./supabase.js";
-import { zAuthLogin, zAuthSignup, zCreateMessage, zDevCreateUser, zUpsertProfile, zUserId } from "./validators.js";
+import {
+  zAuthLogin,
+  zAuthSignup,
+  zCreateJobOffer,
+  zCreateMessage,
+  zDevCreateUser,
+  zUpsertProfile,
+  zUserId
+} from "./validators.js";
 
 const app = express();
 
@@ -278,6 +286,52 @@ app.post(
   }
 );
 
+// ---------- Extraction de texte générique (PDF/image) — pas de persistance Supabase ----------
+app.post(
+  "/api/extract-text",
+  (req, res, next) => {
+    cvUpload.single("file")(req, res, (err: unknown) => {
+      if (err) {
+        const msg = err instanceof Error ? err.message : "Upload invalide";
+        return res.status(400).json({ error: msg });
+      }
+      next();
+    });
+  },
+  async (req, res) => {
+    const user = await requireUser(req, res);
+    if (!user) return;
+
+    const f = (req as express.Request & { file?: Express.Multer.File }).file;
+    if (!f?.buffer) return res.status(400).json({ error: "Fichier requis (PDF ou image)" });
+
+    const name = (f.originalname || "").toLowerCase();
+    const mt = (f.mimetype || "").toLowerCase();
+    const isPdf =
+      name.endsWith(".pdf") ||
+      mt === "application/pdf" ||
+      mt === "application/x-pdf" ||
+      (mt === "application/octet-stream" && name.endsWith(".pdf")) ||
+      (mt === "binary/octet-stream" && name.endsWith(".pdf"));
+    const isImage = mt.startsWith("image/") || /\.(jpe?g|png|webp)$/.test(name);
+    if (!isPdf && !isImage) return res.status(400).json({ error: "Formats acceptés : PDF ou image (JPG, PNG, WebP)" });
+
+    try {
+      const cleanedText = isPdf
+        ? await extractPdfTextBuffer(f.buffer)
+        : await extractImageText(f.buffer);
+      if (!cleanedText) {
+        return res.status(500).json({ error: "Impossible de lire le fichier" });
+      }
+      return res.json({ text: cleanedText, charCount: cleanedText.length });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[extract-text] error:", e);
+      return res.status(500).json({ error: "Impossible de lire le fichier" });
+    }
+  }
+);
+
 // ---------- Auth (sans LLM) ----------
 app.post("/auth/signup", async (req, res) => {
   const body = zAuthSignup.safeParse(req.body);
@@ -310,7 +364,7 @@ app.post("/auth/signup", async (req, res) => {
     }
 
     if (created.data.user) {
-      await supabase
+      const { error: profileErr } = await supabase
         .from("student_profiles")
         .upsert(
           {
@@ -324,6 +378,10 @@ app.post("/auth/signup", async (req, res) => {
           },
           { onConflict: "id" }
         );
+      if (profileErr) {
+        // eslint-disable-next-line no-console
+        console.error("[signup(admin)] échec création student_profiles:", profileErr);
+      }
     }
 
     // return a real session by logging in
@@ -343,7 +401,7 @@ app.post("/auth/signup", async (req, res) => {
 
   // Crée/maj profil applicatif (FK sur auth.users.id)
   if (data.user) {
-    await supabase
+    const { error: profileErr } = await supabase
       .from("student_profiles")
       .upsert(
         {
@@ -358,6 +416,10 @@ app.post("/auth/signup", async (req, res) => {
         { onConflict: "id" }
       )
       .select("id");
+    if (profileErr) {
+      // eslint-disable-next-line no-console
+      console.error("[signup] échec création student_profiles:", profileErr);
+    }
   }
 
   return res.status(201).json({
@@ -409,9 +471,13 @@ app.post("/auth/dev-create-user", async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
 
   if (data.user) {
-    await supabase
+    const { error: profileErr } = await supabase
       .from("student_profiles")
       .upsert({ id: data.user.id, email, full_name: body.data.full_name ?? null }, { onConflict: "id" });
+    if (profileErr) {
+      // eslint-disable-next-line no-console
+      console.error("[dev-create-user] échec création student_profiles:", profileErr);
+    }
   }
 
   return res.status(201).json({ user: data.user });
@@ -695,6 +761,55 @@ app.get("/api/roadmap", async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
   return res.json({ roadmap: data?.roadmap_json ?? null });
+});
+
+// ---------- Job offers ----------
+app.get("/api/job-offers", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const { data, error } = await supabase
+    .from("job_offers")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ offers: data ?? [] });
+});
+
+app.post("/api/job-offers", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const body = zCreateJobOffer.safeParse(req.body);
+  if (!body.success) return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
+
+  const { data, error } = await supabase
+    .from("job_offers")
+    .insert({ posted_by: user.id, ...body.data })
+    .select("*")
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(201).json({ offer: data });
+});
+
+app.delete("/api/job-offers/:id", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const offerId = zUserId.safeParse(req.params.id);
+  if (!offerId.success) return res.status(400).json({ error: "invalid_offer_id" });
+
+  const { data: offer } = await supabase
+    .from("job_offers")
+    .select("posted_by")
+    .eq("id", offerId.data)
+    .maybeSingle();
+  if (!offer || offer.posted_by !== user.id) return res.status(403).json({ error: "forbidden" });
+
+  const { error } = await supabase.from("job_offers").delete().eq("id", offerId.data);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true });
 });
 
 const port = Number(process.env.PORT || process.env.BACKEND_PORT || 8090);

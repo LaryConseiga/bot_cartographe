@@ -39,6 +39,8 @@ export async function forwardRequestToLlm(pathSegments: string[], request: NextR
   if (uct) outHeaders.set("Content-Type", uct);
   const cache = upstream.headers.get("cache-control");
   if (cache) outHeaders.set("Cache-Control", cache);
+  const cd = upstream.headers.get("content-disposition");
+  if (cd) outHeaders.set("Content-Disposition", cd);
   outHeaders.set("X-Accel-Buffering", "no");
 
   return new Response(upstream.body, {
