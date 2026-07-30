@@ -83,7 +83,7 @@ export default function LandingClient() {
           color="text.secondary"
           sx={{ maxWidth: 520, mx: "auto", lineHeight: 1.7, fontSize: 15 }}
         >
-          Analysez votre CV, identifiez vos lacunes de compétences et obtenez un parcours d'apprentissage ancré dans la réalité du marché africain — Burkina Faso, Côte d'Ivoire, Sénégal, Mali.
+          Discutez avec Apex, votre coach carrière IA : analysez votre CV, trouvez des stages et emplois réels, et obtenez un CV et une lettre de motivation adaptés à chaque offre — Burkina Faso, Côte d'Ivoire, Sénégal, Mali.
         </Typography>
 
         {/* Feature chips */}
