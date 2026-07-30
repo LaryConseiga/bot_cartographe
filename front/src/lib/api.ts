@@ -349,6 +349,10 @@ export type StudentProfile = {
   willing_to_relocate: boolean | null;
   preferred_lang: string | null;
   cv_text: string | null;
+  phone: string | null;
+  linkedin: string | null;
+  portfolio: string | null;
+  updated_at?: string;
 };
 
 export async function getMyProfile() {

@@ -16,7 +16,10 @@ export const zUpsertProfile = z.object({
   target_sector: z.string().max(120).nullable().optional(),
   willing_to_relocate: z.boolean().nullable().optional(),
   preferred_lang: z.string().max(8).nullable().optional(),
-  cv_text: z.string().max(20000).nullable().optional()
+  cv_text: z.string().max(20000).nullable().optional(),
+  phone: z.string().max(40).nullable().optional(),
+  linkedin: z.string().max(200).nullable().optional(),
+  portfolio: z.string().max(200).nullable().optional()
 });
 
 export const zCreateChat = z.object({
