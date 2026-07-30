@@ -30,10 +30,10 @@ type Message = { id: string; role: string; content: string };
 
 function makeChatTitle(content: string): string {
   const clean = content.trim().replace(/\s+/g, " ");
-  if (clean.length <= 50) return clean;
-  const cut = clean.slice(0, 50);
-  const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+  const words = clean.split(" ").filter(Boolean);
+  const MAX_WORDS = 5;
+  if (words.length <= MAX_WORDS) return clean;
+  return words.slice(0, MAX_WORDS).join(" ") + "…";
 }
 
 function StatusBanner({
@@ -252,7 +252,13 @@ export default function ChatThreadPage() {
             setMessages(rows.map((m) => ({ id: m.id, role: m.role, content: m.content })));
           }
           if (isFirstMessage) {
-            updateChatTitle(sessionId, makeChatTitle(messageForApi)).catch(() => {});
+            updateChatTitle(sessionId, makeChatTitle(messageForApi))
+              .then(() => {
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(new CustomEvent("apex:chat-title-updated"));
+                }
+              })
+              .catch(() => {});
           }
         } catch (reloadErr) {
           // eslint-disable-next-line no-console

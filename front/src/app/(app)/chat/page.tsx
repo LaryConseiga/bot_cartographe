@@ -22,6 +22,7 @@ import {
   ArrowTrendingUpIcon,
   AcademicCapIcon,
 } from "@heroicons/react/24/outline";
+import { SHOW_PROGRESSION } from "@/lib/featureFlags";
 
 const SUGGESTIONS = [
   {
@@ -39,11 +40,15 @@ const SUGGESTIONS = [
     title: "Tendances marché",
     desc: "Compétences demandées au Burkina Faso",
   },
-  {
-    icon: <AcademicCapIcon style={{ width: 18, height: 18, color: "#EC4899" }} />,
-    title: "Mon plan 6 mois",
-    desc: "Créer un parcours d'apprentissage personnalisé",
-  },
+  ...(SHOW_PROGRESSION
+    ? [
+        {
+          icon: <AcademicCapIcon style={{ width: 18, height: 18, color: "#EC4899" }} />,
+          title: "Mon plan 6 mois",
+          desc: "Créer un parcours d'apprentissage personnalisé",
+        },
+      ]
+    : []),
 ];
 
 export default function ChatHomePage() {

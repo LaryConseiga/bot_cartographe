@@ -21,6 +21,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
+import { SHOW_PROGRESSION } from "@/lib/featureFlags";
 
 import {
   PlusIcon,
@@ -49,7 +50,9 @@ type NavItem = {
 
 const NAV_MAIN: NavItem[] = [
   { label: "Analyse CV",       href: "/chat/analyse-cv",      icon: <ChartBarIcon style={ICON_SM} /> },
-  { label: "Progression",      href: "/chat/progression",     icon: <PresentationChartLineIcon style={ICON_SM} /> },
+  ...(SHOW_PROGRESSION
+    ? [{ label: "Progression", href: "/chat/progression", icon: <PresentationChartLineIcon style={ICON_SM} /> }]
+    : []),
   { label: "Offres d'emploi",  href: "/chat/offres-emploi",   icon: <BriefcaseIcon style={ICON_SM} /> },
   { label: "Tendances marché", href: "/chat/tendances-marche",icon: <ArrowTrendingUpIcon style={ICON_SM} /> },
 ];
@@ -165,6 +168,13 @@ function SidebarContent(props: { onNavigate?: () => void }) {
       refreshChats();
     }
   }, [pathname, refreshChats]);
+
+  // Re-charge quand un titre de chat vient d'être mis à jour (premier message envoyé)
+  React.useEffect(() => {
+    const handler = () => refreshChats();
+    window.addEventListener("apex:chat-title-updated", handler);
+    return () => window.removeEventListener("apex:chat-title-updated", handler);
+  }, [refreshChats]);
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
