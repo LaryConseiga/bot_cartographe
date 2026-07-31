@@ -23,6 +23,8 @@ import {
   AcademicCapIcon,
 } from "@heroicons/react/24/outline";
 import { SHOW_PROGRESSION } from "@/lib/featureFlags";
+import { isDemoSession } from "@/lib/api";
+import DemoGateDialog from "@/components/auth/DemoGateDialog";
 
 const SUGGESTIONS = [
   {
@@ -57,6 +59,7 @@ export default function ChatHomePage() {
   const [uploadingCv, setUploadingCv] = React.useState(false);
   const [cvAttached, setCvAttached] = React.useState<{ fileName: string } | null>(null);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
+  const [showDemoGate, setShowDemoGate] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const hasText = text.trim().length > 0;
 
@@ -97,6 +100,10 @@ export default function ChatHomePage() {
   }
 
   async function handleSend(message?: string) {
+    if (isDemoSession()) {
+      setShowDemoGate(true);
+      return;
+    }
     try {
       const { createMyChat } = await import("@/lib/api");
       const out = await createMyChat();
@@ -284,6 +291,8 @@ export default function ChatHomePage() {
       <Typography variant="caption" color="text.secondary" sx={{ textAlign: "center", maxWidth: 600, opacity: 0.5 }}>
         ApexAI peut commettre des erreurs. Vérifiez les informations importantes.
       </Typography>
+
+      <DemoGateDialog open={showDemoGate} onClose={() => setShowDemoGate(false)} />
     </Box>
   );
 }

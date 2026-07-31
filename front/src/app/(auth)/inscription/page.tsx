@@ -10,7 +10,7 @@ import Typography from "@mui/material/Typography";
 
 import AuthCard from "@/components/auth/AuthCard";
 import AppLink from "@/components/AppLink";
-import { signup, login } from "@/lib/api";
+import { signup, login, friendlyAuthError } from "@/lib/api";
 
 const DEMO_EMAIL = "kofi.mensah@demo.apexai";
 const DEMO_PASSWORD = "Demo1234!";
@@ -72,6 +72,10 @@ export default function InscriptionPage() {
           disabled={loading}
           onClick={async () => {
             setError(null);
+            if (!email.trim() || !password.trim()) {
+              setError("Merci de remplir tous les champs obligatoires (email et mot de passe).");
+              return;
+            }
             setLoading(true);
             try {
               await signup({
@@ -84,7 +88,7 @@ export default function InscriptionPage() {
               });
               router.push("/chat/parametres");
             } catch (e) {
-              setError(e instanceof Error ? e.message : "Erreur d’inscription");
+              setError(friendlyAuthError(e, "Erreur d’inscription"));
             } finally {
               setLoading(false);
             }

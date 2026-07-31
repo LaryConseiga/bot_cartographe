@@ -11,7 +11,7 @@ import Typography from "@mui/material/Typography";
 
 import AuthCard from "@/components/auth/AuthCard";
 import AppLink from "@/components/AppLink";
-import { login } from "@/lib/api";
+import { login, friendlyAuthError } from "@/lib/api";
 
 const DEMO_EMAIL = "kofi.mensah@demo.apexai";
 const DEMO_PASSWORD = "Demo1234!";
@@ -25,12 +25,18 @@ export default function ConnexionPage() {
 
   async function handleLogin(e?: string, p?: string) {
     setError(null);
+    const finalEmail = e ?? email;
+    const finalPassword = p ?? password;
+    if (!finalEmail.trim() || !finalPassword.trim()) {
+      setError("Merci de remplir tous les champs obligatoires (email et mot de passe).");
+      return;
+    }
     setLoading(true);
     try {
-      await login({ email: e ?? email, password: p ?? password });
+      await login({ email: finalEmail, password: finalPassword });
       router.push("/chat");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur de connexion");
+      setError(friendlyAuthError(err, "Erreur de connexion"));
     } finally {
       setLoading(false);
     }

@@ -182,6 +182,7 @@ export async function summarizeThread(messages: { role: string; content: string 
 /** Même clé côté client : le back accepte cookie HttpOnly OU Bearer (voir requireUser). */
 export const ACCESS_TOKEN_STORAGE_KEY = "apexai_access_token";
 export const STUDENT_ID_STORAGE_KEY = "apexai_student_id";
+export const USER_EMAIL_STORAGE_KEY = "apexai_user_email";
 
 function getStoredAccessToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -235,6 +236,28 @@ function persistStudentId(userId: string | null | undefined) {
   else localStorage.removeItem(STUDENT_ID_STORAGE_KEY);
 }
 
+function persistUserEmail(email: string | null | undefined) {
+  if (typeof window === "undefined") return;
+  if (email) localStorage.setItem(USER_EMAIL_STORAGE_KEY, email);
+  else localStorage.removeItem(USER_EMAIL_STORAGE_KEY);
+}
+
+/** Comptes démo partagés (accès "Se connecter sans compte") — vraie session, mais on invite à créer un compte avant d'utiliser le chat. */
+export function isDemoSession(): boolean {
+  if (typeof window === "undefined") return false;
+  const email = localStorage.getItem(USER_EMAIL_STORAGE_KEY);
+  return !!email && email.endsWith("@demo.apexai");
+}
+
+/** Remplace le dump Zod brut (invalid_payload — {...}) par un message compréhensible. */
+export function friendlyAuthError(e: unknown, fallback: string): string {
+  if (!(e instanceof Error)) return fallback;
+  if (e.message.startsWith("invalid_payload")) {
+    return "Merci de remplir tous les champs obligatoires (email et mot de passe).";
+  }
+  return e.message || fallback;
+}
+
 /** Utilisé par AppShell : ne rediriger vers /connexion que sur 401 réel, pas sur erreur réseau / 502. */
 export function isUnauthorizedError(e: unknown): boolean {
   if (!(e instanceof Error)) return false;
@@ -280,6 +303,7 @@ export async function signup(payload: {
   });
   persistSessionToken(out.session);
   persistStudentId(out.user?.id ?? null);
+  persistUserEmail(out.user?.email ?? payload.email);
   return out;
 }
 
@@ -290,6 +314,7 @@ export async function login(payload: { email: string; password: string }) {
   });
   persistSessionToken(out.session);
   persistStudentId(out.user?.id ?? null);
+  persistUserEmail(out.user?.email ?? payload.email);
   return out;
 }
 
@@ -297,6 +322,7 @@ export async function logout() {
   if (typeof window !== "undefined") {
     localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
     localStorage.removeItem(STUDENT_ID_STORAGE_KEY);
+    localStorage.removeItem(USER_EMAIL_STORAGE_KEY);
   }
   return request<{ ok: true }>("/auth/logout", { method: "POST" });
 }

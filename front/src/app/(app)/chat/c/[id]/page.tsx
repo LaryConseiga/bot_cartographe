@@ -13,7 +13,9 @@ import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import Image from "next/image";
 import type { CvMatchSseResult, OfferContext } from "@/lib/api";
+import { isDemoSession } from "@/lib/api";
 import { scoreColor, downloadBlob } from "@/lib/cvMatchDisplay";
+import DemoGateDialog from "@/components/auth/DemoGateDialog";
 
 import {
   PlusIcon,
@@ -157,6 +159,7 @@ export default function ChatThreadPage() {
   const [cvMatchResult, setCvMatchResult] = React.useState<CvMatchSseResult | null>(null);
   const [downloadingCv, setDownloadingCv] = React.useState<"fr" | "en" | null>(null);
   const [downloadingLetter, setDownloadingLetter] = React.useState<"fr" | "en" | null>(null);
+  const [showDemoGate, setShowDemoGate] = React.useState(false);
   const streamingAcc = React.useRef("");
   const abortControllerRef = React.useRef<AbortController | null>(null);
   const sendingLock = React.useRef(false);
@@ -368,6 +371,10 @@ export default function ChatThreadPage() {
 
   function handleSend() {
     if (!canSend || sending || uploadingCv) return;
+    if (isDemoSession()) {
+      setShowDemoGate(true);
+      return;
+    }
     const content = text.trim() || (cvAttached ? "J'ai importé mon CV." : "");
     const cv = cvAttached;
     setText("");
@@ -818,6 +825,8 @@ export default function ChatThreadPage() {
           </Paper>
         </Box>
       </Box>
+
+      <DemoGateDialog open={showDemoGate} onClose={() => setShowDemoGate(false)} />
     </Box>
   );
 }
