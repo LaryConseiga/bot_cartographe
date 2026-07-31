@@ -6,13 +6,13 @@ export const zUpsertProfile = z.object({
   id: z.string().uuid(),
   full_name: z.string().min(1).max(120).nullable().optional(),
   email: z.string().email().nullable().optional(),
-  country: z.string().max(8).nullable().optional(),
+  country: z.string().max(80).nullable().optional(),
   city: z.string().max(80).nullable().optional(),
   field_of_study: z.string().max(120).nullable().optional(),
   school: z.string().max(160).nullable().optional(),
   graduation_year: z.number().int().min(1950).max(2100).nullable().optional(),
   target_role: z.string().max(120).nullable().optional(),
-  target_country: z.string().max(8).nullable().optional(),
+  target_country: z.string().max(80).nullable().optional(),
   target_sector: z.string().max(120).nullable().optional(),
   willing_to_relocate: z.boolean().nullable().optional(),
   preferred_lang: z.string().max(8).nullable().optional(),
@@ -36,7 +36,7 @@ export const zAuthSignup = z.object({
   email: z.string().email(),
   password: z.string().min(6).max(128),
   full_name: z.string().min(1).max(120).optional(),
-  country: z.string().max(8).optional(),
+  country: z.string().max(80).optional(),
   city: z.string().max(80).optional(),
   preferred_lang: z.string().max(8).optional()
 });
@@ -58,7 +58,7 @@ export const zCreateJobOffer = z.object({
   company: z.string().min(1).max(200),
   contract_type: z.enum(["stage", "alternance", "emploi", "CDI", "CDD"]),
   location: z.string().max(160).nullable().optional(),
-  country: z.string().max(8).nullable().optional(),
+  country: z.string().max(80).nullable().optional(),
   description: z.string().min(1).max(6000)
 });
 

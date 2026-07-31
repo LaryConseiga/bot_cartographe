@@ -52,7 +52,7 @@ export default function InscriptionPage() {
         />
         <TextField
           label="Pays (optionnel)"
-          placeholder="SN / CI / BF…"
+          placeholder="Sénégal, Côte d'Ivoire, Burkina Faso…"
           fullWidth
           value={country}
           onChange={(e) => setCountry(e.target.value)}
