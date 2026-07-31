@@ -16,12 +16,15 @@ import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
+import Menu from "@mui/material/Menu";
+import MenuItem from "@mui/material/MenuItem";
 import Toolbar from "@mui/material/Toolbar";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
 import { SHOW_PROGRESSION } from "@/lib/featureFlags";
+import { initials } from "@/lib/profileMapping";
 
 import {
   PlusIcon,
@@ -35,6 +38,7 @@ import {
   ShareIcon,
   ChatBubbleLeftIcon,
   UserCircleIcon,
+  ArrowRightOnRectangleIcon,
 } from "@heroicons/react/24/outline";
 
 const LOGO_SRC = "/ChatGPT Image May 7, 2026, 01_41_46 PM.png";
@@ -322,13 +326,17 @@ export default function AppShell(props: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
+  const [fullName, setFullName] = React.useState("");
+  const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
 
   React.useEffect(() => {
     let alive = true;
     import("@/lib/api")
       .then(async ({ getMyProfile, isUnauthorizedError }) => {
         try {
-          await getMyProfile();
+          const out = await getMyProfile();
+          if (!alive) return;
+          setFullName(out.profile?.full_name || "");
         } catch (e) {
           if (!alive) return;
           if (isUnauthorizedError(e)) router.replace("/connexion");
@@ -341,6 +349,18 @@ export default function AppShell(props: { children: React.ReactNode }) {
       alive = false;
     };
   }, [router]);
+
+  async function handleLogout() {
+    setAccountAnchor(null);
+    try {
+      const { logout } = await import("@/lib/api");
+      await logout();
+    } catch {
+      /* ignore */
+    } finally {
+      router.push("/connexion");
+    }
+  }
 
   React.useEffect(() => {
     if (isMobile) setOpen(false);
@@ -401,19 +421,51 @@ export default function AppShell(props: { children: React.ReactNode }) {
               </IconButton>
             </Tooltip>
             <Tooltip title="Mon compte">
-              <Avatar
-                sx={{
-                  width: 30,
-                  height: 30,
-                  bgcolor: "primary.main",
-                  fontSize: 13,
-                  fontWeight: 800,
-                  cursor: "pointer",
+              <IconButton
+                type="button"
+                aria-label="Mon compte"
+                size="small"
+                onClick={(e) => setAccountAnchor(e.currentTarget)}
+                sx={{ p: 0 }}
+              >
+                <Avatar
+                  sx={{
+                    width: 30,
+                    height: 30,
+                    bgcolor: "primary.main",
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  {initials(fullName)}
+                </Avatar>
+              </IconButton>
+            </Tooltip>
+            <Menu
+              anchorEl={accountAnchor}
+              open={Boolean(accountAnchor)}
+              onClose={() => setAccountAnchor(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+            >
+              <MenuItem
+                onClick={() => {
+                  setAccountAnchor(null);
+                  router.push("/chat/profil");
                 }}
               >
-                A
-              </Avatar>
-            </Tooltip>
+                <ListItemIcon>
+                  <UserCircleIcon style={ICON_SM} />
+                </ListItemIcon>
+                Voir le profil
+              </MenuItem>
+              <MenuItem onClick={handleLogout}>
+                <ListItemIcon>
+                  <ArrowRightOnRectangleIcon style={ICON_SM} />
+                </ListItemIcon>
+                Déconnexion
+              </MenuItem>
+            </Menu>
           </Toolbar>
         </AppBar>
 

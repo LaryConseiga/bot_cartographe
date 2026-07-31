@@ -21,15 +21,8 @@ import {
 } from "@heroicons/react/24/outline";
 
 import { getMyProfile, getMySkills, listJobOffers, deleteJobOffer, type JobOffer, type StudentSkill } from "@/lib/api";
-import { toUI, type ProfileUI } from "@/lib/profileMapping";
+import { toUI, initials, type ProfileUI } from "@/lib/profileMapping";
 import { SHOW_PROGRESSION } from "@/lib/featureFlags";
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "AI";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 function ContactRow({ icon, value }: { icon: React.ReactNode; value: string }) {
   return (
