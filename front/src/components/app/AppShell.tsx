@@ -244,7 +244,7 @@ function SidebarContent(props: { onNavigate?: () => void }) {
             borderRadius: 2,
             fontSize: 13.5,
             borderColor: "rgba(255,255,255,0.12)",
-            color: "text.primary",
+            color: "#E5E7EB",
             "&:hover": {
               borderColor: "primary.main",
               color: "primary.main",
