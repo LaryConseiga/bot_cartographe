@@ -39,6 +39,8 @@ import {
   ChatBubbleLeftIcon,
   UserCircleIcon,
   ArrowRightOnRectangleIcon,
+  EllipsisVerticalIcon,
+  TrashIcon,
 } from "@heroicons/react/24/outline";
 
 const LOGO_SRC = "/ChatGPT Image May 7, 2026, 01_41_46 PM.png";
@@ -131,7 +133,10 @@ function NavButton({
 
 function SidebarContent(props: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [recents, setRecents] = React.useState<Array<{ id: string; title: string }>>([]);
+  const [menuAnchor, setMenuAnchor] = React.useState<{ el: HTMLElement; chatId: string } | null>(null);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
   const refreshChats = React.useCallback(() => {
     let alive = true;
@@ -178,6 +183,24 @@ function SidebarContent(props: { onNavigate?: () => void }) {
     window.addEventListener("apex:chat-title-updated", handler);
     return () => window.removeEventListener("apex:chat-title-updated", handler);
   }, [refreshChats]);
+
+  async function handleDeleteChat(chatId: string) {
+    setMenuAnchor(null);
+    if (!window.confirm("Supprimer cette conversation ? Cette action est définitive.")) return;
+    setDeletingId(chatId);
+    try {
+      const { deleteChat } = await import("@/lib/api");
+      await deleteChat(chatId);
+      setRecents((prev) => prev.filter((c) => c.id !== chatId));
+      if (pathname === `/chat/c/${chatId}`) {
+        router.push("/chat");
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -273,39 +296,68 @@ function SidebarContent(props: { onNavigate?: () => void }) {
             const href = `/chat/c/${c.id}`;
             const selected = pathname === href || pathname.startsWith(href + "/");
             return (
-              <ListItemButton
-                key={c.id}
-                component={NextLink}
-                href={href}
-                selected={selected}
-                onClick={props.onNavigate}
-                sx={{
-                  borderRadius: 2,
-                  mx: 0.75,
-                  my: 0.1,
-                  py: 0.55,
-                  px: 1.25,
-                  "&.Mui-selected": { bgcolor: "rgba(16,163,127,0.10)", color: "primary.main" },
-                  "&:hover": { bgcolor: "rgba(255,255,255,0.05)" },
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 26, opacity: 0.45, color: "inherit" }}>
-                  <ChatBubbleLeftIcon style={{ width: 13, height: 13 }} />
-                </ListItemIcon>
-                <ListItemText
-                  primary={c.title}
-                  slotProps={{
-                    primary: {
-                      noWrap: true,
-                      sx: { fontSize: 12.5, fontWeight: selected ? 700 : 500 },
-                    },
+              <Box key={c.id} sx={{ display: "flex", alignItems: "center", mx: 0.75, my: 0.1 }}>
+                <ListItemButton
+                  component={NextLink}
+                  href={href}
+                  selected={selected}
+                  onClick={props.onNavigate}
+                  sx={{
+                    borderRadius: 2,
+                    py: 0.55,
+                    px: 1.25,
+                    minWidth: 0,
+                    flex: 1,
+                    "&.Mui-selected": { bgcolor: "rgba(16,163,127,0.10)", color: "primary.main" },
+                    "&:hover": { bgcolor: "rgba(255,255,255,0.05)" },
                   }}
-                />
-              </ListItemButton>
+                >
+                  <ListItemIcon sx={{ minWidth: 26, opacity: 0.45, color: "inherit" }}>
+                    <ChatBubbleLeftIcon style={{ width: 13, height: 13 }} />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={c.title}
+                    slotProps={{
+                      primary: {
+                        noWrap: true,
+                        sx: { fontSize: 12.5, fontWeight: selected ? 700 : 500 },
+                      },
+                    }}
+                  />
+                </ListItemButton>
+                <IconButton
+                  type="button"
+                  size="small"
+                  aria-label="Options de la conversation"
+                  disabled={deletingId === c.id}
+                  onClick={(e) => setMenuAnchor({ el: e.currentTarget, chatId: c.id })}
+                  sx={{ opacity: 0.45, flexShrink: 0, "&:hover": { opacity: 1 } }}
+                >
+                  <EllipsisVerticalIcon style={{ width: 15, height: 15 }} />
+                </IconButton>
+              </Box>
             );
           })
         )}
       </List>
+
+      <Menu
+        anchorEl={menuAnchor?.el ?? null}
+        open={Boolean(menuAnchor)}
+        onClose={() => setMenuAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        <MenuItem
+          onClick={() => menuAnchor && handleDeleteChat(menuAnchor.chatId)}
+          sx={{ color: "error.main" }}
+        >
+          <ListItemIcon sx={{ color: "error.main" }}>
+            <TrashIcon style={{ width: 16, height: 16 }} />
+          </ListItemIcon>
+          Supprimer
+        </MenuItem>
+      </Menu>
 
       <Divider sx={{ opacity: 0.12, mx: 1.5 }} />
 

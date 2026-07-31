@@ -666,6 +666,25 @@ app.patch("/api/my/chats/:id", async (req, res) => {
   return res.json({ chat: data });
 });
 
+app.delete("/api/my/chats/:id", async (req, res) => {
+  const user = await requireUser(req, res);
+  if (!user) return;
+
+  const sessionId = zUserId.safeParse(req.params.id);
+  if (!sessionId.success) return res.status(400).json({ error: "invalid_session_id" });
+
+  const { data: session } = await supabase
+    .from("chat_sessions")
+    .select("student_id")
+    .eq("id", sessionId.data)
+    .maybeSingle();
+  if (!session || session.student_id !== user.id) return res.status(403).json({ error: "forbidden" });
+
+  const { error } = await supabase.from("chat_sessions").delete().eq("id", sessionId.data);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ ok: true });
+});
+
 app.get("/api/chats/:sessionId/messages", async (req, res) => {
   const user = await requireUser(req, res);
   if (!user) return;

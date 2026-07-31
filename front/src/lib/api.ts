@@ -319,6 +319,10 @@ export async function updateChatTitle(sessionId: string, title: string) {
   });
 }
 
+export async function deleteChat(sessionId: string) {
+  return request<{ ok: true }>(`/api/my/chats/${sessionId}`, { method: "DELETE" });
+}
+
 export async function createMyChat(session_ref?: string) {
   return request<{ chat: ChatSession }>("/api/my/chats", {
     method: "POST",
