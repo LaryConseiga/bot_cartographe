@@ -260,8 +260,11 @@ def _build_student_context_block(student_id: str) -> str:
             if gap.get("missing_skills"):
                 lines.append(f"Lacunes identifiées : {', '.join(gap['missing_skills'])}")
 
-        if len(lines) <= 2:
+        if len(lines) <= 2 and not profile.get("cv_text"):
             return ""
+
+        if profile.get("cv_text"):
+            lines.append(f"CV importé (texte complet) :\n{profile['cv_text'][:12000]}")
 
         lines.append("---\n")
         return "\n".join(lines)
@@ -334,8 +337,14 @@ def chat():
         except FileNotFoundError as e:
             return jsonify({"error": str(e)}), 400
 
-        # Injecter le CV dans le system prompt si fourni
-        if isinstance(cv_text, str) and cv_text.strip():
+        # Injecter le contexte étudiant depuis Supabase (si student_id connu) — inclut le CV complet,
+        # récupéré à chaque tour (pas seulement au moment de l'upload) pour qu'Apex ne "l'oublie" jamais.
+        student_context_block = _build_student_context_block(student_id)
+        cv_already_in_context = "CV importé (texte complet)" in student_context_block
+
+        # Filet de sécurité : si le CV fourni dans la requête n'est pas déjà couvert par le contexte DB
+        # (ex. student_id absent, ou écriture en base pas encore visible), on l'injecte quand même.
+        if isinstance(cv_text, str) and cv_text.strip() and not cv_already_in_context:
             excerpt = cv_text.strip()[:12000]
             system_prompt = (
                 system_prompt
@@ -344,8 +353,6 @@ def chat():
                 + "\n---\n"
             )
 
-        # Injecter le contexte étudiant depuis Supabase (si student_id connu)
-        student_context_block = _build_student_context_block(student_id)
         if student_context_block:
             system_prompt = system_prompt + student_context_block
 

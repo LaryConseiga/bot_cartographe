@@ -24,7 +24,9 @@ Tu dois produire **un unique objet JSON**, sans aucun texte avant ou après, res
 3. `strengths` : 2-5 points forts concrets du candidat par rapport à cette offre précise.
 4. `gaps` : 1-5 écarts ou manques concrets par rapport à l'offre (formulés de façon constructive, jamais décourageante).
 5. `reorg_suggestions` : 2-5 conseils concrets de réorganisation du CV (ex. "mettre telle expérience en premier", "regrouper telles compétences dans une section visible").
-6. `explanation` : 3 à 5 phrases en français expliquant le score et la logique globale.
+6. `explanation` : 3 à 5 phrases en français, ton de coach honnête et bienveillant qui donne confiance — le
+   verdict factuel (forces/lacunes par rapport à ce poste précis), jamais la méthode utilisée pour l'obtenir
+   (ne jamais écrire « j'ai comparé... », « en analysant... » : donne directement la conclusion).
 7. `cv_fr` et `cv_en` : le même contenu de CV, réorganisé et reformulé pour maximiser l'adéquation avec l'offre, une fois en français et une fois en anglais **naturel** (pas une traduction mot à mot). Les deux doivent décrire la même personne et les mêmes faits.
 8. Les bullets d'expérience doivent commencer par un verbe d'action et conserver les résultats chiffrés du CV source s'ils existent.
 9. Si une information (téléphone, email, LinkedIn...) est absente du CV, mets `null` plutôt que d'inventer une valeur.
