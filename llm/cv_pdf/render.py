@@ -112,6 +112,10 @@ def _resolve_tectonic_bin() -> str:
     fallback = Path.home() / ".local" / "bin" / "tectonic"
     if fallback.exists():
         return str(fallback)
+    # Répertoire du projet llm/ (là où la commande de build de Render dépose le binaire)
+    project_fallback = Path(__file__).resolve().parent.parent / "tectonic"
+    if project_fallback.exists():
+        return str(project_fallback)
     raise CvPdfCompileError(
         "Moteur LaTeX 'tectonic' introuvable. Installe-le et ajoute-le au PATH "
         "(ou définis TECTONIC_BIN)."
