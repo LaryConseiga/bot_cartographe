@@ -24,6 +24,7 @@ import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
 import { SHOW_PROGRESSION } from "@/lib/featureFlags";
+import { isAdminEmail } from "@/lib/adminConfig";
 import { initials } from "@/lib/profileMapping";
 
 import {
@@ -41,6 +42,7 @@ import {
   ArrowRightOnRectangleIcon,
   EllipsisVerticalIcon,
   TrashIcon,
+  ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
 
 const LOGO_SRC = "/ChatGPT Image May 7, 2026, 01_41_46 PM.png";
@@ -68,8 +70,14 @@ const NAV_FOOTER: NavItem[] = [
   { label: "Aide",       href: "/chat/aide",        icon: <QuestionMarkCircleIcon style={ICON_SM} /> },
 ];
 
+const ADMIN_NAV_ITEM: NavItem = {
+  label: "Admin",
+  href: "/chat/admin",
+  icon: <ShieldCheckIcon style={ICON_SM} />,
+};
+
 function getTitle(pathname: string) {
-  const all = [...NAV_MAIN, ...NAV_FOOTER];
+  const all = [...NAV_MAIN, ...NAV_FOOTER, ADMIN_NAV_ITEM];
   const found = all.find((x) => pathname === x.href || pathname.startsWith(x.href + "/"));
   if (pathname === "/chat" || pathname.startsWith("/chat/c/")) return "ApexAI";
   return found?.label ?? "ApexAI";
@@ -131,7 +139,7 @@ function NavButton({
   );
 }
 
-function SidebarContent(props: { onNavigate?: () => void }) {
+function SidebarContent(props: { onNavigate?: () => void; isAdmin?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const [recents, setRecents] = React.useState<Array<{ id: string; title: string }>>([]);
@@ -363,7 +371,7 @@ function SidebarContent(props: { onNavigate?: () => void }) {
 
       {/* Footer nav */}
       <List dense sx={{ px: 0.5, py: 1, flexShrink: 0 }}>
-        {NAV_FOOTER.map((item) => {
+        {(props.isAdmin ? [...NAV_FOOTER, ADMIN_NAV_ITEM] : NAV_FOOTER).map((item) => {
           const selected = pathname === item.href || pathname.startsWith(item.href + "/");
           return <NavButton key={item.href} item={item} selected={selected} onNavigate={props.onNavigate} />;
         })}
@@ -379,7 +387,9 @@ export default function AppShell(props: { children: React.ReactNode }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [fullName, setFullName] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [accountAnchor, setAccountAnchor] = React.useState<null | HTMLElement>(null);
+  const isAdmin = isAdminEmail(email);
 
   React.useEffect(() => {
     let alive = true;
@@ -389,6 +399,7 @@ export default function AppShell(props: { children: React.ReactNode }) {
           const out = await getMyProfile();
           if (!alive) return;
           setFullName(out.profile?.full_name || "");
+          setEmail(out.profile?.email || "");
         } catch (e) {
           if (!alive) return;
           if (isUnauthorizedError(e)) router.replace("/connexion");
@@ -436,7 +447,7 @@ export default function AppShell(props: { children: React.ReactNode }) {
             },
           }}
         >
-          <SidebarContent onNavigate={() => setOpen(false)} />
+          <SidebarContent onNavigate={() => setOpen(false)} isAdmin={isAdmin} />
         </Drawer>
       </Box>
 

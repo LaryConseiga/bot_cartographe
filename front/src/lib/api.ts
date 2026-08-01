@@ -442,6 +442,24 @@ export async function deleteJobOffer(id: string) {
   return request<{ ok: true }>(`/api/job-offers/${id}`, { method: "DELETE" });
 }
 
+export type AdminMetrics = {
+  users_total: number;
+  users_new_last_7d: number;
+  conversations_total: number;
+  messages_total: number;
+  job_offers_active: number;
+  documents: {
+    cv_fr: number;
+    cv_en: number;
+    letter_fr: number;
+    letter_en: number;
+  };
+};
+
+export async function getAdminMetrics() {
+  return request<{ metrics: AdminMetrics }>("/api/admin/metrics");
+}
+
 export async function listMessages(sessionId: string) {
   return request<{ messages: ChatMessage[] }>(`/api/chats/${sessionId}/messages`);
 }
@@ -622,10 +640,11 @@ export async function matchCvToOffer(
 
 /** Génère un CV PDF (LaTeX compilé) à partir du contenu structuré retourné par matchCvToOffer. */
 export async function generateCvPdf(cv: CvContent, lang: "fr" | "en"): Promise<Blob> {
+  const student_id = resolveStudentIdForLlm();
   const res = await fetch(llmEndpoint("generate-cv-pdf"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cv, lang })
+    body: JSON.stringify({ cv, lang, ...(student_id ? { student_id } : {}) })
   });
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: string };
@@ -644,10 +663,11 @@ export async function generateLetterPdf(
   },
   lang: "fr" | "en"
 ): Promise<Blob> {
+  const student_id = resolveStudentIdForLlm();
   const res = await fetch(llmEndpoint("generate-letter-pdf"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...payload, lang })
+    body: JSON.stringify({ ...payload, lang, ...(student_id ? { student_id } : {}) })
   });
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: string };

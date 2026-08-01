@@ -533,6 +533,21 @@ def _slugify(text: str) -> str:
     return slug or "cv"
 
 
+def _log_document_generation(student_id, doc_type: str, lang: str) -> None:
+    """Log best-effort pour le dashboard admin — ne doit jamais faire échouer la génération du PDF."""
+    if not DB_TOOLS_AVAILABLE or not student_id:
+        return
+    try:
+        sb = get_supabase()
+        sb.table("document_generations").insert({
+            "student_id": student_id,
+            "doc_type": doc_type,
+            "lang": lang,
+        }).execute()
+    except Exception as e:
+        print(f"[document_generations] log ignoré: {e}")
+
+
 @app.route("/cv-match", methods=["POST"])
 def cv_match():
     try:
@@ -572,6 +587,7 @@ def generate_cv_pdf():
         data = request.get_json() or {}
         cv = data.get("cv")
         lang = data.get("lang")
+        student_id = data.get("student_id")
 
         if lang not in ("fr", "en"):
             return jsonify({"error": "Le champ 'lang' doit être 'fr' ou 'en'"}), 400
@@ -584,6 +600,8 @@ def generate_cv_pdf():
         except CvPdfCompileError as e:
             print(f"[cv-pdf] échec de compilation: {e}\n{e.stderr_tail}")
             return jsonify({"error": str(e)}), 500
+
+        _log_document_generation(student_id, "cv", lang)
 
         full_name = ((cv.get("personal_info") or {}).get("full_name")) or "cv"
         filename = f"CV_{_slugify(full_name)}_{lang}.pdf"
@@ -607,6 +625,7 @@ def generate_letter_pdf():
         location = data.get("location")
         paragraphs = data.get("paragraphs")
         lang = data.get("lang")
+        student_id = data.get("student_id")
 
         if lang not in ("fr", "en"):
             return jsonify({"error": "Le champ 'lang' doit être 'fr' ou 'en'"}), 400
@@ -621,6 +640,8 @@ def generate_letter_pdf():
         except CvPdfCompileError as e:
             print(f"[letter-pdf] échec de compilation: {e}\n{e.stderr_tail}")
             return jsonify({"error": str(e)}), 500
+
+        _log_document_generation(student_id, "letter", lang)
 
         full_name = personal_info.get("full_name") or "lettre"
         filename = f"Lettre_{_slugify(full_name)}_{lang}.pdf"

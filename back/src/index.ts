@@ -225,6 +225,21 @@ async function requireUser(req: express.Request, res: express.Response) {
   return data.user;
 }
 
+function isAdminEmail(email: string | undefined | null): boolean {
+  const adminEmail = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+  return !!adminEmail && (email || "").toLowerCase() === adminEmail;
+}
+
+async function requireAdmin(req: express.Request, res: express.Response) {
+  const user = await requireUser(req, res);
+  if (!user) return null; // requireUser a déjà répondu 401
+  if (!isAdminEmail(user.email)) {
+    res.status(403).json({ error: "forbidden" });
+    return null;
+  }
+  return user;
+}
+
 // ---------- Upload CV (PDF) — extraction texte locale ; le LLM (Groq/Tavily) vit dans llm/ ----------
 app.post(
   "/api/upload-cv",
@@ -782,6 +797,8 @@ app.get("/api/roadmap", async (req, res) => {
   return res.json({ roadmap: data?.roadmap_json ?? null });
 });
 
+const JOB_OFFER_TTL_DAYS = 60;
+
 // ---------- Job offers ----------
 app.get("/api/job-offers", async (req, res) => {
   const user = await requireUser(req, res);
@@ -824,12 +841,78 @@ app.delete("/api/job-offers/:id", async (req, res) => {
     .select("posted_by")
     .eq("id", offerId.data)
     .maybeSingle();
-  if (!offer || offer.posted_by !== user.id) return res.status(403).json({ error: "forbidden" });
+  if (!offer || (offer.posted_by !== user.id && !isAdminEmail(user.email))) {
+    return res.status(403).json({ error: "forbidden" });
+  }
 
   const { error } = await supabase.from("job_offers").delete().eq("id", offerId.data);
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ ok: true });
 });
+
+// ---------- Admin ----------
+app.get("/api/admin/metrics", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+
+  const jobOfferCutoff = new Date(Date.now() - JOB_OFFER_TTL_DAYS * 86_400_000).toISOString();
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const count = async (table: string, apply?: (q: any) => any) => {
+    let query = supabase.from(table).select("*", { count: "exact", head: true });
+    if (apply) query = apply(query);
+    const { count: n, error } = await query;
+    if (error) throw new Error(`${table}: ${error.message}`);
+    return n ?? 0;
+  };
+
+  try {
+    const [
+      usersTotal,
+      usersNewLast7d,
+      conversationsTotal,
+      messagesTotal,
+      jobOffersActive,
+      cvFr,
+      cvEn,
+      letterFr,
+      letterEn,
+    ] = await Promise.all([
+      count("student_profiles"),
+      count("student_profiles", (q) => q.gte("created_at", weekAgo)),
+      count("chat_sessions"),
+      count("chat_messages"),
+      count("job_offers", (q) => q.gte("created_at", jobOfferCutoff)),
+      count("document_generations", (q) => q.eq("doc_type", "cv").eq("lang", "fr")),
+      count("document_generations", (q) => q.eq("doc_type", "cv").eq("lang", "en")),
+      count("document_generations", (q) => q.eq("doc_type", "letter").eq("lang", "fr")),
+      count("document_generations", (q) => q.eq("doc_type", "letter").eq("lang", "en")),
+    ]);
+
+    return res.json({
+      metrics: {
+        users_total: usersTotal,
+        users_new_last_7d: usersNewLast7d,
+        conversations_total: conversationsTotal,
+        messages_total: messagesTotal,
+        job_offers_active: jobOffersActive,
+        documents: { cv_fr: cvFr, cv_en: cvEn, letter_fr: letterFr, letter_en: letterEn },
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+async function cleanupExpiredJobOffers() {
+  const cutoff = new Date(Date.now() - JOB_OFFER_TTL_DAYS * 86_400_000).toISOString();
+  const { error } = await supabase.from("job_offers").delete().lt("created_at", cutoff);
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error("[cleanup] job_offers:", error.message);
+  }
+}
 
 const port = Number(process.env.PORT || process.env.BACKEND_PORT || 8090);
 app.listen(port, () => {
@@ -837,6 +920,8 @@ app.listen(port, () => {
   console.log(`[apexai-back] listening on http://localhost:${port}`);
   // eslint-disable-next-line no-console
   console.log(`[apexai-back] DEV_BYPASS_EMAIL_SIGNUP=${process.env.DEV_BYPASS_EMAIL_SIGNUP ?? "0"}`);
+  cleanupExpiredJobOffers();
+  setInterval(cleanupExpiredJobOffers, 6 * 60 * 60 * 1000);
 });
 
 async function checkSupabaseConnection() {
