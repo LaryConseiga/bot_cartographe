@@ -122,7 +122,7 @@ def _resolve_tectonic_bin() -> str:
     )
 
 
-def compile_pdf(tex_source: str, timeout_s: int = 25) -> bytes:
+def compile_pdf(tex_source: str, timeout_s: int = 90) -> bytes:
     tectonic_bin = _resolve_tectonic_bin()
     with tempfile.TemporaryDirectory(prefix="apex_cv_pdf_") as tmpdir:
         tex_path = Path(tmpdir) / "main.tex"
