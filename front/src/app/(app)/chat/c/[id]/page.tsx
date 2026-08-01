@@ -12,7 +12,7 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import CircularProgress from "@mui/material/CircularProgress";
 import Image from "next/image";
-import type { CvMatchSseResult, OfferContext } from "@/lib/api";
+import type { CvMatchSseResult, CvGeneratedSseResult, OfferContext } from "@/lib/api";
 import { isDemoSession } from "@/lib/api";
 import { scoreColor, downloadBlob } from "@/lib/cvMatchDisplay";
 import DemoGateDialog from "@/components/auth/DemoGateDialog";
@@ -157,6 +157,8 @@ export default function ChatThreadPage() {
   const [cvAttached, setCvAttached] = React.useState<{ text: string; fileName: string } | null>(null);
   const [roadmapReady, setRoadmapReady] = React.useState(false);
   const [cvMatchResult, setCvMatchResult] = React.useState<CvMatchSseResult | null>(null);
+  const [cvGenerated, setCvGenerated] = React.useState<CvGeneratedSseResult | null>(null);
+  const [downloadingGenerated, setDownloadingGenerated] = React.useState<"fr" | "en" | null>(null);
   const [downloadingCv, setDownloadingCv] = React.useState<"fr" | "en" | null>(null);
   const [downloadingLetter, setDownloadingLetter] = React.useState<"fr" | "en" | null>(null);
   const [showDemoGate, setShowDemoGate] = React.useState(false);
@@ -231,6 +233,9 @@ export default function ChatThreadPage() {
           },
           onCvMatchResult: (data) => {
             setCvMatchResult(data);
+          },
+          onCvGenerated: (data) => {
+            setCvGenerated(data);
           },
         });
         assistantSynced = streamingAcc.current;
@@ -429,6 +434,23 @@ export default function ChatThreadPage() {
       setChatError(err instanceof Error ? err.message : "Import du document impossible.");
     } finally {
       setUploadingCv(false);
+    }
+  }
+
+  async function handleDownloadGenerated(lang: "fr" | "en") {
+    if (!cvGenerated) return;
+    setDownloadingGenerated(lang);
+    setChatError(null);
+    try {
+      const { generateCvPdf } = await import("@/lib/api");
+      const cv = lang === "fr" ? cvGenerated.cv_fr : cvGenerated.cv_en;
+      const blob = await generateCvPdf(cv, lang);
+      const name = cv.personal_info?.full_name?.replace(/\s+/g, "_") || "cv";
+      downloadBlob(blob, `CV_${name}_${lang}.pdf`);
+    } catch (e) {
+      setChatError(e instanceof Error ? e.message : "Erreur lors de la génération du PDF.");
+    } finally {
+      setDownloadingGenerated(null);
     }
   }
 
@@ -695,6 +717,49 @@ export default function ChatThreadPage() {
                 Cover Letter (EN)
               </Button>
             ) : null}
+          </Box>
+        </Paper>
+      ) : null}
+
+      {/* CV professionnel généré (sans offre précise) */}
+      {cvGenerated ? (
+        <Paper
+          elevation={0}
+          sx={{
+            maxWidth: 860,
+            width: "100%",
+            mx: "auto",
+            mb: 1.5,
+            p: 2,
+            border: "1px solid rgba(16,163,127,0.4)",
+            bgcolor: "rgba(16,163,127,0.06)",
+            borderRadius: 2,
+          }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 700, fontSize: 13.5, mb: 1.5 }}>
+            Ton CV professionnel est prêt
+          </Typography>
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={downloadingGenerated !== null}
+              startIcon={downloadingGenerated === "fr" ? <CircularProgress size={14} sx={{ color: "#fff" }} /> : <ArrowDownTrayIcon style={{ width: 14, height: 14 }} />}
+              onClick={() => handleDownloadGenerated("fr")}
+              sx={{ textTransform: "none", fontWeight: 700, bgcolor: "#10A37F", "&:hover": { bgcolor: "#0d8f6a" }, boxShadow: "none" }}
+            >
+              Télécharger CV (FR)
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={downloadingGenerated !== null}
+              startIcon={downloadingGenerated === "en" ? <CircularProgress size={14} /> : <ArrowDownTrayIcon style={{ width: 14, height: 14 }} />}
+              onClick={() => handleDownloadGenerated("en")}
+              sx={{ textTransform: "none", fontWeight: 700 }}
+            >
+              Download CV (EN)
+            </Button>
           </Box>
         </Paper>
       ) : null}

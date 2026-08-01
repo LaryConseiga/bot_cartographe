@@ -300,6 +300,7 @@ _DB_TOOL_STATUS = {
     "generate_roadmap": "Apex génère ta roadmap personnalisée…",
     "list_job_offers": "Apex consulte les offres publiées…",
     "match_cv_to_offer": "Apex compare ton profil à l'offre…",
+    "generate_cv_document": "Apex met en forme ton CV…",
 }
 
 

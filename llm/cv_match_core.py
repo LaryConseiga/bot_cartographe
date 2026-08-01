@@ -17,3 +17,22 @@ def run_cv_match(groq_client, model: str, load_skill, cv_text: str, job_offer_te
         response_format={"type": "json_object"},
     )
     return json.loads(response.choices[0].message.content)
+
+
+def run_cv_generate(groq_client, model: str, load_skill, cv_text: str, target_context: str = "") -> dict:
+    """Réorganise un CV en document professionnel (sans offre précise) via apex_cv_generator."""
+    system_prompt = load_skill("apex_cv_generator")
+    contexte = target_context.strip() if target_context else "(non précisé)"
+    user_prompt = f"CV :\n{cv_text}\n\nCONTEXTE (rôle/secteur ciblé) :\n{contexte}"
+
+    response = groq_client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.4,
+        max_tokens=6000,
+        response_format={"type": "json_object"},
+    )
+    return json.loads(response.choices[0].message.content)

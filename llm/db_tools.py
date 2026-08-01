@@ -693,6 +693,67 @@ DB_TOOLS.append({
 })
 
 
+def generate_cv_document(student_id: str) -> tuple[str, dict | None]:
+    """Réorganise le CV de l'étudiant en document professionnel téléchargeable, sans offre précise requise."""
+    from supabase_client import get_supabase
+    from cv_match_core import run_cv_generate
+
+    try:
+        sb = get_supabase()
+
+        profile_res = (
+            sb.table("student_profiles")
+            .select("cv_text,target_role,target_sector")
+            .eq("id", student_id)
+            .limit(1)
+            .execute()
+        )
+        profile_rows = profile_res.data or []
+        if not profile_rows:
+            return json.dumps({"error": "Aucun CV enregistre pour cet etudiant."}, ensure_ascii=False), None
+
+        cv_text = (profile_rows[0].get("cv_text") or "").strip()
+        if not cv_text:
+            return json.dumps({"error": "Aucun CV enregistre pour cet etudiant."}, ensure_ascii=False), None
+
+        target_context = ", ".join(
+            filter(None, [profile_rows[0].get("target_role"), profile_rows[0].get("target_sector")])
+        )
+
+        from main import groq_client, MODEL, load_skill
+        parsed = run_cv_generate(groq_client, MODEL, load_skill, cv_text, target_context)
+
+        compact = json.dumps({"ok": True}, ensure_ascii=False)
+        side_effect = {
+            "type": "cv_generated",
+            "data": {
+                "cv_fr": parsed.get("cv_fr"),
+                "cv_en": parsed.get("cv_en"),
+            },
+        }
+        return compact, side_effect
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False), None
+
+
+DB_TOOLS.append({
+    "type": "function",
+    "function": {
+        "name": "generate_cv_document",
+        "description": (
+            "Reorganise le CV de l'etudiant en document professionnel bien structure et telechargeable "
+            "(sans comparaison a une offre precise). A utiliser quand l'etudiant veut un CV pro mis en "
+            "forme mais n'a pas d'offre d'emploi concrete en tete."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+})
+
+
 # Map name → function for dispatch
 DB_TOOL_FUNCTIONS = {
     "get_student_context": get_student_context,
@@ -702,4 +763,5 @@ DB_TOOL_FUNCTIONS = {
     "generate_roadmap": generate_roadmap,
     "list_job_offers": list_job_offers,
     "match_cv_to_offer": match_cv_to_offer,
+    "generate_cv_document": generate_cv_document,
 }

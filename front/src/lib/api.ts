@@ -68,6 +68,11 @@ export type CvMatchSseResult = {
   cover_letter_en: string[];
 };
 
+export type CvGeneratedSseResult = {
+  cv_fr: CvContent;
+  cv_en: CvContent;
+};
+
 export async function consumeLlmChatSse(
   res: Response,
   handlers: {
@@ -75,6 +80,7 @@ export async function consumeLlmChatSse(
     onStatus?: (evt: ChatStatusEvent) => void;
     onRoadmap?: (data: unknown) => void;
     onCvMatchResult?: (data: CvMatchSseResult) => void;
+    onCvGenerated?: (data: CvGeneratedSseResult) => void;
     onDone?: () => void;
   }
 ): Promise<string> {
@@ -107,6 +113,10 @@ export async function consumeLlmChatSse(
     }
     if (rec.type === "cv_match_result" && rec.data) {
       handlers.onCvMatchResult?.(rec.data as CvMatchSseResult);
+      return false;
+    }
+    if (rec.type === "cv_generated" && rec.data) {
+      handlers.onCvGenerated?.(rec.data as CvGeneratedSseResult);
       return false;
     }
     if (typeof rec.token === "string") {
@@ -655,6 +665,7 @@ export type StreamChatOptions = {
   onStatus?: (evt: ChatStatusEvent) => void;
   onRoadmap?: (data: unknown) => void;
   onCvMatchResult?: (data: CvMatchSseResult) => void;
+  onCvGenerated?: (data: CvGeneratedSseResult) => void;
   onDone?: () => void;
 };
 
@@ -668,8 +679,18 @@ export async function streamChatMessage(
   message: string,
   options: StreamChatOptions = {}
 ): Promise<void> {
-  const { cvText, skill = DEFAULT_LLM_SKILL, offerContext, signal, onToken, onStatus, onRoadmap, onCvMatchResult, onDone } =
-    options;
+  const {
+    cvText,
+    skill = DEFAULT_LLM_SKILL,
+    offerContext,
+    signal,
+    onToken,
+    onStatus,
+    onRoadmap,
+    onCvMatchResult,
+    onCvGenerated,
+    onDone
+  } = options;
 
   await sendMessage(sessionId, message);
   const history = await listMessages(sessionId);
@@ -694,7 +715,14 @@ export async function streamChatMessage(
     throw new Error(txt || `HTTP ${res.status}`);
   }
 
-  const assistantText = await consumeLlmChatSse(res, { onToken, onStatus, onRoadmap, onCvMatchResult, onDone });
+  const assistantText = await consumeLlmChatSse(res, {
+    onToken,
+    onStatus,
+    onRoadmap,
+    onCvMatchResult,
+    onCvGenerated,
+    onDone
+  });
   const toSave = assistantText.trim();
   if (toSave) {
     await saveAssistantMessage(sessionId, toSave);
