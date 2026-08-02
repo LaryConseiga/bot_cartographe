@@ -1,0 +1,130 @@
+\documentclass[10pt,a4paper,ragged2e,withhyper]{altacv}
+\usepackage{paracol}
+\geometry{left=1.3cm,right=1.3cm,top=1.4cm,bottom=1.4cm,columnsep=1.1cm}
+
+\definecolor{ApexTeal}{HTML}{10A37F}
+\definecolor{ApexSlate}{HTML}{262626}
+\definecolor{ApexGrey}{HTML}{595959}
+\colorlet{heading}{ApexTeal}
+\colorlet{headingrule}{ApexTeal}
+\colorlet{accent}{ApexTeal}
+\colorlet{emphasis}{ApexSlate}
+\colorlet{body}{ApexGrey}
+
+% Tag plein/coloré pour les compétences mises en avant (distinct des \cvtag en contour).
+\newcommand{\cvtaghighlight}[1]{%
+  \tikz[baseline]\node[anchor=base,fill=accent,rounded corners,inner xsep=1ex,inner ysep=0.75ex,text height=1.5ex,text depth=.25ex,text=white,font=\bfseries]{#1};
+}
+
+\name{\VAR{cv.personal_info.full_name}}
+\BLOCK{ if cv.target_title }
+\tagline{\VAR{cv.target_title}}
+\BLOCK{ endif }
+\personalinfo{%
+\BLOCK{ if cv.personal_info.email }
+  \email{\VAR{cv.personal_info.email}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.phone }
+  \phone{\VAR{cv.personal_info.phone}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.location }
+  \location{\VAR{cv.personal_info.location}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.linkedin }
+  \linkedin{\VAR{cv.personal_info.linkedin}}
+\BLOCK{ endif }
+\BLOCK{ if cv.personal_info.portfolio }
+  \homepage{\VAR{cv.personal_info.portfolio}}
+\BLOCK{ endif }
+}
+
+\begin{document}
+\makecvheader
+\columnratio{0.62}
+\begin{paracol}{2}
+
+\BLOCK{ if cv.summary }
+\cvsection{\VAR{labels.summary}}
+\VAR{cv.summary}
+\BLOCK{ endif }
+
+\BLOCK{ if cv.experience }
+\cvsection{\VAR{labels.experience}}
+\BLOCK{ for job in cv.experience }
+\cvevent{\VAR{job.title}}{\VAR{job.company}}{\VAR{job.start_date} -- \VAR{job.end_date}}{\VAR{job.location}}
+\BLOCK{ if job.bullets }
+\begin{itemize}
+\BLOCK{ for b in job.bullets }
+\item \VAR{b}
+\BLOCK{ endfor }
+\end{itemize}
+\BLOCK{ endif }
+\smallskip
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\BLOCK{ if cv.education }
+\cvsection{\VAR{labels.education}}
+\BLOCK{ for edu in cv.education }
+\cvevent{\VAR{edu.degree}}{\VAR{edu.school}}{\VAR{edu.start_date} -- \VAR{edu.end_date}}{\VAR{edu.location}}
+\BLOCK{ if edu.details }
+\VAR{edu.details}
+\BLOCK{ endif }
+\smallskip
+\BLOCK{ endfor }
+\BLOCK{ endif }
+
+\switchcolumn
+\renewcommand{\cvsectionfont}{\Large\bfseries}
+
+\BLOCK{ if cv.skills.highlighted }
+\cvsection{\VAR{labels.highlighted}}
+\BLOCK{ for s in cv.skills.highlighted }
+\cvtaghighlight{\VAR{s}}
+\BLOCK{ endfor }
+\medskip
+\BLOCK{ endif }
+
+\BLOCK{ if cv.skills.hard }
+\cvsection{\VAR{labels.hard}}
+\BLOCK{ for s in cv.skills.hard }
+\cvtag{\VAR{s}}
+\BLOCK{ endfor }
+\medskip
+\BLOCK{ endif }
+
+\BLOCK{ if cv.skills.tools }
+\cvsection{\VAR{labels.tools}}
+\BLOCK{ for s in cv.skills.tools }
+\cvtag{\VAR{s}}
+\BLOCK{ endfor }
+\medskip
+\BLOCK{ endif }
+
+\BLOCK{ if cv.skills.soft }
+\cvsection{\VAR{labels.soft}}
+\BLOCK{ for s in cv.skills.soft }
+\cvtag{\VAR{s}}
+\BLOCK{ endfor }
+\medskip
+\BLOCK{ endif }
+
+\BLOCK{ if cv.languages }
+\cvsection{\VAR{labels.languages}}
+\BLOCK{ for lang in cv.languages }
+\textbf{\VAR{lang.name}} --- \VAR{lang.level}\par
+\BLOCK{ endfor }
+\medskip
+\BLOCK{ endif }
+
+\BLOCK{ if cv.certifications }
+\cvsection{\VAR{labels.certifications}}
+\begin{itemize}
+\BLOCK{ for c in cv.certifications }
+\item \VAR{c}
+\BLOCK{ endfor }
+\end{itemize}
+\BLOCK{ endif }
+
+\end{paracol}
+\end{document}

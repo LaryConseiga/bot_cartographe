@@ -28,6 +28,15 @@ ci-dessous.
    traduction mot à mot). Les deux doivent décrire la même personne et les mêmes faits.
 4. Si une information (téléphone, email, LinkedIn, portfolio...) est absente du CV, mets `null` plutôt que
    d'inventer une valeur.
+5. `skills.highlighted` : 3 à 6 compétences **choisies parmi celles déjà présentes** dans `skills.hard`,
+   `skills.soft` ou `skills.tools` (reprends exactement la même chaîne, n'invente jamais une nouvelle
+   compétence), celles qui favorisent le plus l'adhésion du recruteur pour le rôle/secteur ciblé (`CONTEXTE`) si
+   connu, sinon les plus fortes du profil en général. Ce champ pilote uniquement la **mise en valeur visuelle**
+   (mise en avant dans le style et la mise en page du document) — il ne remplace ni ne réduit les listes
+   complètes `hard`/`soft`/`tools`, qui doivent rester intégralement présentes.
+6. **Ne condense ni ne raccourcis aucune section** (expérience, compétences, formation) : la mise en avant se
+   fait uniquement via `skills.highlighted` et le style du document, jamais en retirant du contenu réel du CV
+   source.
 
 # Schéma JSON attendu (à respecter strictement)
 
@@ -43,7 +52,7 @@ ci-dessous.
     "education": [
       {"degree": "", "school": "", "location": "", "start_date": "", "end_date": "", "details": null}
     ],
-    "skills": {"hard": [""], "soft": [""], "tools": [""]},
+    "skills": {"hard": [""], "soft": [""], "tools": [""], "highlighted": [""]},
     "certifications": [""],
     "languages": [{"name": "", "level": ""}]
   },
@@ -57,7 +66,7 @@ ci-dessous.
     "education": [
       {"degree": "", "school": "", "location": "", "start_date": "", "end_date": "", "details": null}
     ],
-    "skills": {"hard": [""], "soft": [""], "tools": [""]},
+    "skills": {"hard": [""], "soft": [""], "tools": [""], "highlighted": [""]},
     "certifications": [""],
     "languages": [{"name": "", "level": ""}]
   }

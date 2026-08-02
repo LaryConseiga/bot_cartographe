@@ -9,6 +9,7 @@ LABELS = {
         "hard": "Techniques",
         "soft": "Comportementales",
         "tools": "Outils",
+        "highlighted": "Compétences clés",
     },
     "en": {
         "summary": "Profile",
@@ -20,6 +21,7 @@ LABELS = {
         "hard": "Technical",
         "soft": "Soft Skills",
         "tools": "Tools",
+        "highlighted": "Key Skills",
     },
 }
 

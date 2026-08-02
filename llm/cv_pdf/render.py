@@ -11,6 +11,7 @@ import datetime
 from .labels import LABELS, LETTER_LABELS
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+VENDOR_DIR = Path(__file__).parent / "vendor"
 
 _LATEX_ESCAPE_MAP = {
     "\\": r"\textbackslash{}",
@@ -73,7 +74,7 @@ def render_tex(cv: dict, lang: str) -> str:
     personal_info["last_name"] = last_name
     cv_for_template = dict(cv)
     cv_for_template["personal_info"] = personal_info
-    template = _LATEX_JINJA_ENV.get_template("moderncv.tex.jinja")
+    template = _LATEX_JINJA_ENV.get_template("altacv.tex.jinja")
     return template.render(cv=cv_for_template, labels=LABELS[lang])
 
 
@@ -122,11 +123,16 @@ def _resolve_tectonic_bin() -> str:
     )
 
 
-def compile_pdf(tex_source: str, timeout_s: int = 90) -> bytes:
+def compile_pdf(tex_source: str, timeout_s: int = 120) -> bytes:
     tectonic_bin = _resolve_tectonic_bin()
     with tempfile.TemporaryDirectory(prefix="apex_cv_pdf_") as tmpdir:
         tex_path = Path(tmpdir) / "main.tex"
         tex_path.write_text(tex_source, encoding="utf-8")
+
+        if VENDOR_DIR.is_dir():
+            for vendor_file in VENDOR_DIR.iterdir():
+                if vendor_file.is_file():
+                    shutil.copy(vendor_file, Path(tmpdir) / vendor_file.name)
 
         try:
             result = subprocess.run(

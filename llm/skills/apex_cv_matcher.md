@@ -30,6 +30,12 @@ Tu dois produire **un unique objet JSON**, sans aucun texte avant ou après, res
 7. `cv_fr` et `cv_en` : le même contenu de CV, réorganisé et reformulé pour maximiser l'adéquation avec l'offre, une fois en français et une fois en anglais **naturel** (pas une traduction mot à mot). Les deux doivent décrire la même personne et les mêmes faits.
 8. Les bullets d'expérience doivent commencer par un verbe d'action et conserver les résultats chiffrés du CV source s'ils existent.
 9. Si une information (téléphone, email, LinkedIn...) est absente du CV, mets `null` plutôt que d'inventer une valeur.
+9bis. `skills.highlighted` : 3 à 6 compétences **choisies parmi celles déjà présentes** dans `skills.hard`,
+   `skills.soft` ou `skills.tools` (reprends exactement la même chaîne, n'invente jamais une nouvelle
+   compétence), celles qui correspondent le mieux à cette offre précise et favorisent le plus l'adhésion du
+   recruteur. Ce champ pilote uniquement la **mise en valeur visuelle** du document — il ne remplace ni ne
+   réduit les listes complètes `hard`/`soft`/`tools`, qui doivent rester intégralement présentes. Ne condense ni
+   ne raccourcis aucune autre section : la mise en avant passe uniquement par ce champ et le style du document.
 10. `cover_letter_fr` et `cover_letter_en` : une lettre de motivation personnalisée pour cette offre précise, sous forme de 3 à 5 paragraphes (tableau de chaînes, un paragraphe par élément, sans formule d'appel ni de politesse finale — celles-ci sont ajoutées automatiquement). Chaque paragraphe doit s'appuyer sur des faits réels du CV (jamais inventer une expérience), mentionner explicitement le poste et l'entreprise visés, et expliquer pourquoi le profil correspond. `cover_letter_en` est un texte équivalent en anglais naturel, pas une traduction mot à mot.
 
 # Schéma JSON attendu (à respecter strictement)
@@ -53,7 +59,7 @@ Tu dois produire **un unique objet JSON**, sans aucun texte avant ou après, res
     "education": [
       {"degree": "", "school": "", "location": "", "start_date": "", "end_date": "", "details": null}
     ],
-    "skills": {"hard": [""], "soft": [""], "tools": [""]},
+    "skills": {"hard": [""], "soft": [""], "tools": [""], "highlighted": [""]},
     "certifications": [""],
     "languages": [{"name": "", "level": ""}]
   },
@@ -67,7 +73,7 @@ Tu dois produire **un unique objet JSON**, sans aucun texte avant ou après, res
     "education": [
       {"degree": "", "school": "", "location": "", "start_date": "", "end_date": "", "details": null}
     ],
-    "skills": {"hard": [""], "soft": [""], "tools": [""]},
+    "skills": {"hard": [""], "soft": [""], "tools": [""], "highlighted": [""]},
     "certifications": [""],
     "languages": [{"name": "", "level": ""}]
   }

@@ -608,7 +608,7 @@ export type CvContent = {
     end_date: string;
     details: string | null;
   }[];
-  skills: { hard: string[]; soft: string[]; tools: string[] };
+  skills: { hard: string[]; soft: string[]; tools: string[]; highlighted?: string[] };
   certifications: string[];
   languages: { name: string; level: string }[];
 };
